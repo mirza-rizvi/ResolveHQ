@@ -1,0 +1,3 @@
+APP_URL=http://localhost:5173
+SESSION_PEPPER=replace-with-at-least-32-random-characters
+DEV_MAIL_MODE=capture
