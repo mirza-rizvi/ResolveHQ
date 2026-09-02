@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { recordActivity } from "resolve-server/activity/service";
@@ -35,6 +35,7 @@ const messageInput = z.object({
   bodyHtml: z.string().max(200_000).optional(),
   kind: z.enum(["message", "internal_note"]).default("message"),
   clientMessageId: z.string().min(8).max(100).optional(),
+  attachmentIds: z.array(z.string().min(1)).max(10).default([]),
 });
 
 export const ticketRoutes = new Hono<HonoEnv>();
@@ -209,6 +210,20 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
   const db = createDb(context.env.DB);
   const [ticket] = await db.select({ id: tickets.id, customerId: tickets.customerId, status: tickets.status }).from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
   if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
+  // Attachments are uploaded before the reply is sent, so the ones named here
+  // must still be unlinked uploads of this agent on this ticket. Counting them
+  // before the insert keeps a bad reference from leaving a message behind.
+  const attachmentIds = [...new Set(input.attachmentIds)];
+  if (attachmentIds.length) {
+    const eligible = await db.select({ total: sql<number>`count(*)` }).from(attachments).where(and(
+      eq(attachments.organizationId, tenant.organizationId),
+      eq(attachments.ticketId, ticket.id),
+      eq(attachments.uploadedByUserId, tenant.userId),
+      isNull(attachments.messageId),
+      inArray(attachments.id, attachmentIds),
+    )).then((rows) => Number(rows[0]?.total ?? 0));
+    if (eligible !== attachmentIds.length) throw new HttpError(404, "attachment_not_found", "An attachment is missing or already used.");
+  }
   const id = newId("msg");
   const outboundJobId = newId("omj");
   const now = new Date();
@@ -230,11 +245,19 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
     if (!existing) throw new HttpError(409, "message_conflict", "The message could not be saved. Try again.");
     return context.json({ message: existing, duplicate: true }, 200);
   }
+  const linkAttachments = attachmentIds.length ? db.update(attachments).set({ messageId: id }).where(and(
+    eq(attachments.organizationId, tenant.organizationId),
+    eq(attachments.ticketId, ticket.id),
+    eq(attachments.uploadedByUserId, tenant.userId),
+    isNull(attachments.messageId),
+    inArray(attachments.id, attachmentIds),
+  )) : null;
   const updateTicket = db.update(tickets).set({ updatedAt: now, lastReplyAt: input.kind === "message" ? now : undefined, lastAgentReplyAt: input.kind === "message" ? now : undefined, lastMessagePreview: preview(input.body), messageCount: sql`${tickets.messageCount} + 1`, version: sql`${tickets.version} + 1` }).where(and(eq(tickets.id, ticket.id), eq(tickets.organizationId, tenant.organizationId)));
   if (input.kind === "message") {
-    await db.batch([updateTicket, db.insert(outboundMailJobs).values({ id: outboundJobId, organizationId: tenant.organizationId, messageId: id, idempotencyKey: `message/${id}`, status: "pending", nextAttemptAt: now }).onConflictDoNothing()]);
+    const queueSend = db.insert(outboundMailJobs).values({ id: outboundJobId, organizationId: tenant.organizationId, messageId: id, idempotencyKey: `message/${id}`, status: "pending", nextAttemptAt: now }).onConflictDoNothing();
+    await (linkAttachments ? db.batch([updateTicket, linkAttachments, queueSend]) : db.batch([updateTicket, queueSend]));
   } else {
-    await db.batch([updateTicket]);
+    await (linkAttachments ? db.batch([updateTicket, linkAttachments]) : db.batch([updateTicket]));
   }
   if (handsOffToCustomer) {
     await context.env.DB.prepare("UPDATE tickets SET status = 'waiting_customer', waiting_since = ? WHERE organization_id = ? AND id = ?").bind(now.getTime(), tenant.organizationId, ticket.id).run();

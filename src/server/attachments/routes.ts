@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
-import { attachments, messages, tickets } from "resolve-server/db/schema";
+import { attachments } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
 import { base64Url, constantTimeEqual, fromBase64Url, signValue } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
@@ -23,19 +23,18 @@ attachmentRoutes.use("*", requireAuth);
 attachmentRoutes.post("/intents", async (context) => {
   const tenant = context.get("tenant");
   if (!(await context.env.WRITE_RATE_LIMIT.limit({ key: `upload:${tenant.userId}` })).success) throw new HttpError(429, "rate_limited", "Slow down and try again in a moment.");
-  const input = await context.req.json<{ ticketId?: string; messageId?: string; filename?: string; contentType?: string; size?: number }>().catch(() => null);
+  const input = await context.req.json<{ ticketId?: string; filename?: string; contentType?: string; size?: number }>().catch(() => null);
   if (!input) throw new HttpError(400, "invalid_upload", "File metadata must be valid JSON.");
-  if (!input.ticketId || !input.messageId || !input.filename || !input.contentType || !Number.isInteger(input.size)) throw new HttpError(400, "invalid_upload", "File metadata is incomplete.");
+  if (!input.ticketId || !input.filename || !input.contentType || !Number.isInteger(input.size)) throw new HttpError(400, "invalid_upload", "File metadata is incomplete.");
   if ((input.size ?? 0) < 1 || (input.size ?? 0) > maxFileSize) throw new HttpError(413, "file_too_large", "Files must be smaller than 15 MB.");
   if (!allowedTypes.has(input.contentType)) throw new HttpError(415, "unsupported_file", "This file type is not supported.");
-  await assertMessage(context.env.DB, tenant.organizationId, input.ticketId, input.messageId);
+  await assertTicket(context.env.DB, tenant.organizationId, input.ticketId);
   const attachmentId = newId("att");
   const payload = base64Url(new TextEncoder().encode(JSON.stringify({
     attachmentId,
     organizationId: tenant.organizationId,
     userId: tenant.userId,
     ticketId: input.ticketId,
-    messageId: input.messageId,
     filename: safeFilename(input.filename),
     contentType: input.contentType,
     size: input.size,
@@ -57,7 +56,7 @@ attachmentRoutes.put("/intents/:token", async (context) => {
   const contentLength = Number(context.req.header("content-length"));
   if (contentLength !== intent.size) throw new HttpError(400, "upload_size_mismatch", "The uploaded file size does not match the upload intent.");
   if (context.req.header("content-type") !== intent.contentType || !context.req.raw.body) throw new HttpError(415, "mime_mismatch", "The uploaded content type does not match the upload intent.");
-  await assertMessage(context.env.DB, tenant.organizationId, intent.ticketId, intent.messageId);
+  await assertTicket(context.env.DB, tenant.organizationId, intent.ticketId);
   const objectKey = `${tenant.organizationId}/${intent.attachmentId}/${crypto.randomUUID()}`;
   await context.env.ATTACHMENTS.put(objectKey, context.req.raw.body, { httpMetadata: { contentType: intent.contentType }, customMetadata: { attachmentId: intent.attachmentId } });
   const object = await context.env.ATTACHMENTS.get(objectKey);
@@ -69,43 +68,12 @@ attachmentRoutes.put("/intents/:token", async (context) => {
   }
   const checksum = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", body)));
   try {
-    await createDb(context.env.DB).insert(attachments).values({ id: intent.attachmentId, organizationId: tenant.organizationId, ticketId: intent.ticketId, messageId: intent.messageId, objectKey, filename: intent.filename, contentType: intent.contentType, size: intent.size, checksum, uploadedByUserId: tenant.userId });
+    await createDb(context.env.DB).insert(attachments).values({ id: intent.attachmentId, organizationId: tenant.organizationId, ticketId: intent.ticketId, messageId: null, objectKey, filename: intent.filename, contentType: intent.contentType, size: intent.size, checksum, uploadedByUserId: tenant.userId });
   } catch (error) {
     await context.env.ATTACHMENTS.delete(objectKey);
     throw error;
   }
-  return context.json({ attachment: { id: intent.attachmentId, filename: intent.filename, contentType: intent.contentType, size: intent.size } }, 201);
-});
-
-attachmentRoutes.post("/", async (context) => {
-  const tenant = context.get("tenant");
-  const form = await context.req.formData();
-  const file = form.get("file");
-  const ticketId = String(form.get("ticketId") ?? "");
-  const messageId = String(form.get("messageId") ?? "");
-  if (!(file instanceof File) || !ticketId || !messageId) throw new HttpError(400, "invalid_upload", "Choose a file and conversation message.");
-  if (file.size < 1 || file.size > maxFileSize) throw new HttpError(413, "file_too_large", "Files must be smaller than 15 MB.");
-  if (!allowedTypes.has(file.type)) throw new HttpError(415, "unsupported_file", "This file type is not supported.");
-
-  const db = createDb(context.env.DB);
-  const [message] = await db.select({ id: messages.id }).from(messages)
-    .innerJoin(tickets, and(eq(tickets.id, messages.ticketId), eq(tickets.organizationId, tenant.organizationId)))
-    .where(and(eq(messages.id, messageId), eq(messages.ticketId, ticketId), eq(messages.organizationId, tenant.organizationId))).limit(1);
-  if (!message) throw new HttpError(404, "message_not_found", "Conversation message not found.");
-
-  const body = await file.arrayBuffer();
-  if (!matchesSignature(new Uint8Array(body), file.type)) throw new HttpError(415, "mime_mismatch", "The file contents do not match its declared type.");
-  const id = newId("att");
-  const objectKey = `${tenant.organizationId}/${id}/${crypto.randomUUID()}`;
-  const checksum = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", body)));
-  await new R2StorageProvider(context.env.ATTACHMENTS).put({ key: objectKey, body, contentType: file.type, metadata: { attachmentId: id } });
-  try {
-    await db.insert(attachments).values({ id, organizationId: tenant.organizationId, ticketId, messageId, objectKey, filename: safeFilename(file.name), contentType: file.type, size: file.size, checksum, uploadedByUserId: tenant.userId });
-  } catch (error) {
-    await context.env.ATTACHMENTS.delete(objectKey);
-    throw error;
-  }
-  return context.json({ attachment: { id, filename: safeFilename(file.name), contentType: file.type, size: file.size } }, 201);
+  return context.json({ attachment: { id: intent.attachmentId, ticketId: intent.ticketId, messageId: null, filename: intent.filename, contentType: intent.contentType, size: intent.size } }, 201);
 });
 
 attachmentRoutes.get("/:id", async (context) => {
@@ -128,11 +96,11 @@ attachmentRoutes.get("/:id", async (context) => {
   });
 });
 
-interface UploadIntent { attachmentId: string; organizationId: string; userId: string; ticketId: string; messageId: string; filename: string; contentType: string; size: number; expiresAt: number }
+interface UploadIntent { attachmentId: string; organizationId: string; userId: string; ticketId: string; filename: string; contentType: string; size: number; expiresAt: number }
 
-async function assertMessage(database: D1Database, organizationId: string, ticketId: string, messageId: string) {
-  const message = await database.prepare("SELECT 1 FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id WHERE m.organization_id = ? AND m.ticket_id = ? AND m.id = ?").bind(organizationId, ticketId, messageId).first();
-  if (!message) throw new HttpError(404, "message_not_found", "Conversation message not found.");
+async function assertTicket(database: D1Database, organizationId: string, ticketId: string) {
+  const ticket = await database.prepare("SELECT 1 FROM tickets WHERE organization_id = ? AND id = ?").bind(organizationId, ticketId).first();
+  if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
 }
 
 function safeFilename(name: string) {

@@ -70,5 +70,14 @@ export default {
       await env.ATTACHMENTS.delete(row.key);
       await env.DB.prepare("UPDATE inbound_mail_events SET staging_object_key = 'deleted/' || id WHERE id = ?").bind(row.id).run();
     }
+
+    // An upload that never made it onto a reply is dead weight in R2. The object
+    // goes first so a failure here leaves a row to retry rather than a file with
+    // nothing left pointing at it.
+    const orphans = await env.DB.prepare("SELECT id, object_key AS key FROM attachments WHERE message_id IS NULL AND created_at < ? ORDER BY created_at LIMIT 50").bind(now - 24 * 60 * 60 * 1000).all<{ id: string; key: string }>();
+    for (const orphan of orphans.results) {
+      await env.ATTACHMENTS.delete(orphan.key);
+      await env.DB.prepare("DELETE FROM attachments WHERE id = ? AND message_id IS NULL").bind(orphan.id).run();
+    }
   },
 } satisfies ExportedHandler<AppBindings, MailQueueMessage>;

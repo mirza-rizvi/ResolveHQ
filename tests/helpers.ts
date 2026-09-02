@@ -29,7 +29,7 @@ export async function login(email: string, password: string): Promise<TestSessio
 
 export function request(path: string, init: RequestInit = {}, session?: TestSession) {
   const headers = new Headers(init.headers);
-  if (init.body && !(init.body instanceof FormData)) headers.set("content-type", "application/json");
+  if (init.body && !(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
   if (session) { headers.set("cookie", session.cookie); headers.set("x-csrf-token", session.csrf); headers.set("origin", env.APP_URL); }
   return app.request(`http://localhost:8787/api${path}`, { ...init, headers }, env);
 }
