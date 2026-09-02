@@ -210,21 +210,21 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
   const db = createDb(context.env.DB);
   const [ticket] = await db.select({ id: tickets.id, customerId: tickets.customerId, status: tickets.status }).from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
   if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
-  // Attachments are uploaded before the reply is sent, so the ones named here
-  // must still be unlinked uploads of this agent on this ticket. Counting them
-  // before the insert keeps a bad reference from leaving a message behind.
-  const attachmentIds = [...new Set(input.attachmentIds)];
-  if (attachmentIds.length) {
-    const eligible = await db.select({ total: sql<number>`count(*)` }).from(attachments).where(and(
-      eq(attachments.organizationId, tenant.organizationId),
-      eq(attachments.ticketId, ticket.id),
-      eq(attachments.uploadedByUserId, tenant.userId),
-      isNull(attachments.messageId),
-      inArray(attachments.id, attachmentIds),
-    )).then((rows) => Number(rows[0]?.total ?? 0));
-    if (eligible !== attachmentIds.length) throw new HttpError(404, "attachment_not_found", "An attachment is missing or already used.");
+  const clientMessageId = input.clientMessageId;
+  const findExisting = clientMessageId
+    ? () => db.select({ id: messages.id, ticketId: messages.ticketId, authorType: messages.authorType, kind: messages.kind, bodyText: messages.bodyText, createdAt: messages.createdAt })
+      .from(messages).where(and(eq(messages.organizationId, tenant.organizationId), eq(messages.clientMessageId, clientMessageId))).limit(1).then((rows) => rows[0])
+    : null;
+  // A retry of a submit that already landed must answer with the message that
+  // won rather than re-claiming its attachments, which the winner now owns.
+  // This read is only a fast path: the unique index below still arbitrates two
+  // retries that race past it.
+  if (findExisting) {
+    const settled = await findExisting();
+    if (settled) return context.json({ message: settled, duplicate: true }, 200);
   }
   const id = newId("msg");
+  const attachmentIds = [...new Set(input.attachmentIds)];
   const outboundJobId = newId("omj");
   const now = new Date();
   // An agent reply hands the conversation back to the customer; internal notes,
@@ -239,25 +239,42 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
   // else. Only the request whose insert took effect goes on to bump the ticket
   // and queue delivery; the losers report the message that won.
   const inserted = await db.insert(messages).values(values).onConflictDoNothing();
-  if (input.clientMessageId && !inserted.meta.changes) {
-    const existing = await db.select({ id: messages.id, ticketId: messages.ticketId, authorType: messages.authorType, kind: messages.kind, bodyText: messages.bodyText, createdAt: messages.createdAt })
-      .from(messages).where(and(eq(messages.organizationId, tenant.organizationId), eq(messages.clientMessageId, input.clientMessageId))).limit(1).then((rows) => rows[0]);
+  if (findExisting && !inserted.meta.changes) {
+    const existing = await findExisting();
     if (!existing) throw new HttpError(409, "message_conflict", "The message could not be saved. Try again.");
     return context.json({ message: existing, duplicate: true }, 200);
   }
-  const linkAttachments = attachmentIds.length ? db.update(attachments).set({ messageId: id }).where(and(
-    eq(attachments.organizationId, tenant.organizationId),
-    eq(attachments.ticketId, ticket.id),
-    eq(attachments.uploadedByUserId, tenant.userId),
-    isNull(attachments.messageId),
-    inArray(attachments.id, attachmentIds),
-  )) : null;
+  // Attachments are uploaded before the reply is sent, so linking them is a
+  // claim rather than a check: one UPDATE guarded by `message_id IS NULL` lets
+  // exactly one request take each row, so two concurrent sends naming the same
+  // upload cannot both believe they own it. The claim has to follow the insert
+  // because `attachments.message_id` references `messages.id`, so a short claim
+  // unwinds the message it just wrote — releasing the rows first, since deleting
+  // the message would otherwise cascade the claimed attachments away with it.
+  // Both statements travel in one batch, and the cron sweep collects any upload
+  // a crash leaves unclaimed.
+  if (attachmentIds.length) {
+    const claimed = await db.update(attachments).set({ messageId: id }).where(and(
+      eq(attachments.organizationId, tenant.organizationId),
+      eq(attachments.ticketId, ticket.id),
+      eq(attachments.uploadedByUserId, tenant.userId),
+      isNull(attachments.messageId),
+      inArray(attachments.id, attachmentIds),
+    ));
+    if (claimed.meta.changes !== attachmentIds.length) {
+      await db.batch([
+        db.update(attachments).set({ messageId: null }).where(and(eq(attachments.organizationId, tenant.organizationId), eq(attachments.messageId, id))),
+        db.delete(messages).where(and(eq(messages.organizationId, tenant.organizationId), eq(messages.id, id))),
+      ]);
+      throw new HttpError(404, "attachment_not_found", "An attachment is missing or already used.");
+    }
+  }
   const updateTicket = db.update(tickets).set({ updatedAt: now, lastReplyAt: input.kind === "message" ? now : undefined, lastAgentReplyAt: input.kind === "message" ? now : undefined, lastMessagePreview: preview(input.body), messageCount: sql`${tickets.messageCount} + 1`, version: sql`${tickets.version} + 1` }).where(and(eq(tickets.id, ticket.id), eq(tickets.organizationId, tenant.organizationId)));
   if (input.kind === "message") {
     const queueSend = db.insert(outboundMailJobs).values({ id: outboundJobId, organizationId: tenant.organizationId, messageId: id, idempotencyKey: `message/${id}`, status: "pending", nextAttemptAt: now }).onConflictDoNothing();
-    await (linkAttachments ? db.batch([updateTicket, linkAttachments, queueSend]) : db.batch([updateTicket, queueSend]));
+    await db.batch([updateTicket, queueSend]);
   } else {
-    await (linkAttachments ? db.batch([updateTicket, linkAttachments]) : db.batch([updateTicket]));
+    await db.batch([updateTicket]);
   }
   if (handsOffToCustomer) {
     await context.env.DB.prepare("UPDATE tickets SET status = 'waiting_customer', waiting_since = ? WHERE organization_id = ? AND id = ?").bind(now.getTime(), tenant.organizationId, ticket.id).run();

@@ -47,6 +47,32 @@ describe("attachment authorization", () => {
     expect(unlinked?.messageId).toBeNull();
   });
 
+  it("lets exactly one of two concurrent sends claim the same attachment", async () => {
+    const workspace = await signup("attach-race");
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "D", email: "d@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "Race", message: "x" }) }, workspace)).json() as { ticket: { id: string } }).ticket;
+    const file = new TextEncoder().encode("contended log");
+    const intent = await (await request("/attachments/intents", { method: "POST", body: JSON.stringify({ ticketId: ticket.id, filename: "log.txt", contentType: "text/plain", size: file.byteLength }) }, workspace)).json() as { upload: { attachmentId: string; url: string } };
+    expect((await request(intent.upload.url.replace(/^\/api/, ""), { method: "PUT", body: file, headers: { "content-type": "text/plain", "content-length": String(file.byteLength) } }, workspace)).status).toBe(201);
+
+    // Two independent sends, so the client id cannot arbitrate: only the
+    // attachment claim decides which reply is allowed to exist.
+    const send = (clientMessageId: string) => request(`/tickets/${ticket.id}/messages`, { method: "POST", body: JSON.stringify({ body: `race ${clientMessageId}`, kind: "message", clientMessageId, attachmentIds: [intent.upload.attachmentId] }) }, workspace);
+    const responses = await Promise.all([send("race-client-0001"), send("race-client-0002")]);
+    const statuses = responses.map((response) => response.status).sort();
+    expect(statuses).toEqual([201, 404]);
+
+    const winnerIndex = responses.findIndex((response) => response.status === 201);
+    const message = (await responses[winnerIndex].json() as { message: { id: string } }).message;
+    const row = await env.DB.prepare("SELECT message_id AS messageId FROM attachments WHERE id = ?").bind(intent.upload.attachmentId).first<{ messageId: string }>();
+    expect(row?.messageId).toBe(message.id);
+    const winnerClientId = winnerIndex === 0 ? "race-client-0001" : "race-client-0002";
+    const loserClientId = winnerIndex === 0 ? "race-client-0002" : "race-client-0001";
+    const kept = await env.DB.prepare("SELECT client_message_id AS clientMessageId FROM messages WHERE ticket_id = ? AND client_message_id IS NOT NULL").bind(ticket.id).all<{ clientMessageId: string }>();
+    expect(kept.results.map((entry) => entry.clientMessageId)).toEqual([winnerClientId]);
+    expect(await env.DB.prepare("SELECT id FROM messages WHERE client_message_id = ?").bind(loserClientId).first()).toBeNull();
+  });
+
   it("sweeps orphaned uploads and their objects after a day", async () => {
     const workspace = await signup("attach-orphan");
     const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "C", email: "c@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;

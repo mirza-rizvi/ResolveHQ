@@ -76,8 +76,12 @@ export default {
     // nothing left pointing at it.
     const orphans = await env.DB.prepare("SELECT id, object_key AS key FROM attachments WHERE message_id IS NULL AND created_at < ? ORDER BY created_at LIMIT 50").bind(now - 24 * 60 * 60 * 1000).all<{ id: string; key: string }>();
     for (const orphan of orphans.results) {
-      await env.ATTACHMENTS.delete(orphan.key);
-      await env.DB.prepare("DELETE FROM attachments WHERE id = ? AND message_id IS NULL").bind(orphan.id).run();
+      try {
+        await env.ATTACHMENTS.delete(orphan.key);
+        await env.DB.prepare("DELETE FROM attachments WHERE id = ? AND message_id IS NULL").bind(orphan.id).run();
+      } catch (error) {
+        console.error("ResolveHQ orphan attachment cleanup failure", orphan.id, error);
+      }
     }
   },
 } satisfies ExportedHandler<AppBindings, MailQueueMessage>;

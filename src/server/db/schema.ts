@@ -392,6 +392,9 @@ export const attachments = sqliteTable(
   (table) => [
     index("attachments_organization_ticket_idx").on(table.organizationId, table.ticketId),
     index("attachments_organization_message_idx").on(table.organizationId, table.messageId),
+    // The migration declares this one partial (`WHERE message_id IS NULL`) for the
+    // orphan sweep; drizzle cannot express that, so the migration is authoritative.
+    index("attachments_pending_idx").on(table.messageId, table.createdAt),
   ],
 );
 
