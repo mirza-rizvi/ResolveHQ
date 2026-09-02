@@ -12,7 +12,10 @@ export async function signup(suffix: string): Promise<TestSession> {
   const body = await response.json() as { user: { id: string }; organization: { id: string }; csrfToken: string };
   const cookies = response.headers.get("set-cookie") ?? "";
   const found = [...cookies.matchAll(/(resolvehq_(?:session|csrf))=([^;,]+)/g)];
-  return { cookie: found.map((match) => `${match[1]}=${match[2]}`).join("; "), csrf: body.csrfToken, userId: body.user.id, organizationId: body.organization.id };
+  const session: TestSession = { cookie: found.map((match) => `${match[1]}=${match[2]}`).join("; "), csrf: body.csrfToken, userId: body.user.id, organizationId: body.organization.id };
+  const inboxResponse = await request("/organization/inboxes", { method: "POST", body: JSON.stringify({ name: "Support", emailAddress: `support-${suffix}@example.test` }) }, session);
+  if (inboxResponse.status !== 201) throw new Error(`Default inbox creation failed: ${inboxResponse.status} ${await inboxResponse.text()}`);
+  return session;
 }
 
 export function request(path: string, init: RequestInit = {}, session?: TestSession) {

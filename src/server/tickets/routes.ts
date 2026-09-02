@@ -4,10 +4,11 @@ import { z } from "zod";
 import { recordActivity } from "resolve-server/activity/service";
 import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
-import { attachments, customers, inboxes, messages, notifications, organizationMemberships, outboundMailJobs, tags, teams, ticketAssignments, ticketReadStates, ticketTags, tickets, users } from "resolve-server/db/schema";
+import { attachments, customers, inboxes, messages, outboundMailJobs, tags, ticketReadStates, ticketTags, tickets, users } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import { newId, normalizeSearch } from "resolve-server/lib/id";
+import { applyTicketUpdate, assertActiveMember, preview, refreshTicketSearch } from "resolve-server/tickets/service";
 import type { HonoEnv } from "resolve-server/types";
 import { ticketPriorities, ticketStatuses } from "resolve-shared/domain";
 
@@ -103,6 +104,7 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
   if (!customer) throw new HttpError(404, "customer_not_found", "Customer not found.");
   if (input.assignedUserId) await assertActiveMember(context.env.DB, tenant.organizationId, input.assignedUserId);
   const defaultInbox = await db.select({ id: inboxes.id }).from(inboxes).where(and(eq(inboxes.organizationId, tenant.organizationId), isNull(inboxes.disabledAt))).orderBy(desc(inboxes.isDefault), asc(inboxes.createdAt)).limit(1).then((rows) => rows[0]);
+  if (!defaultInbox) throw new HttpError(409, "no_inbox", "Add a support inbox in Settings before starting conversations.");
 
   const numberRow = await context.env.DB.prepare(
     "UPDATE organizations SET next_ticket_number = next_ticket_number + 1, updated_at = ? WHERE id = ? RETURNING next_ticket_number - 1 AS number",
@@ -111,21 +113,23 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
 
   const ticketId = newId("tkt");
   const messageId = newId("msg");
+  const outboundJobId = newId("omj");
   const now = new Date();
   await db.batch([
     db.insert(tickets).values({
       id: ticketId,
       organizationId: tenant.organizationId,
-      inboxId: defaultInbox?.id,
+      inboxId: defaultInbox.id,
       number: numberRow.number,
       customerId: customer.id,
       subject: input.subject,
-      status: "open",
+      status: "waiting_customer",
       priority: input.priority,
       assignedUserId: input.assignedUserId,
       normalizedSearch: normalizeSearch(String(numberRow.number), input.subject, customer.name, customer.email),
       lastReplyAt: now,
-      lastCustomerReplyAt: now,
+      lastAgentReplyAt: now,
+      waitingSince: now,
       lastMessagePreview: preview(input.message),
       messageCount: 1,
     }),
@@ -133,18 +137,20 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
       id: messageId,
       organizationId: tenant.organizationId,
       ticketId,
-      authorType: "customer",
-      authorCustomerId: customer.id,
+      authorType: "agent",
+      authorUserId: tenant.userId,
       kind: "message",
       bodyText: input.message,
       normalizedSearch: normalizeSearch(input.message),
-      deliveryStatus: "received",
+      deliveryStatus: "queued",
     }),
+    db.insert(outboundMailJobs).values({ id: outboundJobId, organizationId: tenant.organizationId, messageId, idempotencyKey: `message/${messageId}`, status: "pending", nextAttemptAt: now }),
     db.update(customers).set({ lastContactedAt: now, updatedAt: now }).where(and(eq(customers.id, customer.id), eq(customers.organizationId, tenant.organizationId))),
   ]);
   await refreshTicketSearch(context.env.DB, tenant.organizationId, ticketId);
   await recordActivity(db, tenant, { ticketId, eventType: "ticket.created", entityType: "ticket", entityId: ticketId, metadata: { number: numberRow.number } });
-  return context.json({ ticket: { id: ticketId, number: numberRow.number, subject: input.subject, status: "open", priority: input.priority } }, 201);
+  await context.env.OUTBOUND_MAIL_QUEUE.send({ kind: "outbound-mail", jobId: outboundJobId });
+  return context.json({ ticket: { id: ticketId, number: numberRow.number, subject: input.subject, status: "waiting_customer", priority: input.priority } }, 201);
 });
 
 ticketRoutes.get("/:id", async (context) => {
@@ -159,7 +165,23 @@ ticketRoutes.get("/:id", async (context) => {
     .where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
   if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
   const [thread, tagRows, attachmentRows] = await Promise.all([
-    db.select().from(messages).where(and(eq(messages.ticketId, ticket.id), eq(messages.organizationId, tenant.organizationId))).orderBy(asc(messages.createdAt)).limit(50),
+    db.select({
+      id: messages.id,
+      ticketId: messages.ticketId,
+      authorType: messages.authorType,
+      authorUserId: messages.authorUserId,
+      kind: messages.kind,
+      bodyText: messages.bodyText,
+      bodyHtml: messages.bodyHtml,
+      deliveryStatus: messages.deliveryStatus,
+      deliveryError: outboundMailJobs.lastError,
+      authorName: users.name,
+      createdAt: messages.createdAt,
+    }).from(messages)
+      .leftJoin(users, eq(users.id, messages.authorUserId))
+      .leftJoin(outboundMailJobs, and(eq(outboundMailJobs.messageId, messages.id), eq(outboundMailJobs.organizationId, tenant.organizationId)))
+      .where(and(eq(messages.ticketId, ticket.id), eq(messages.organizationId, tenant.organizationId)))
+      .orderBy(asc(messages.createdAt)).limit(50),
     db.select({ id: tags.id, name: tags.name, color: tags.color }).from(ticketTags).innerJoin(tags, and(eq(tags.id, ticketTags.tagId), eq(tags.organizationId, tenant.organizationId))).where(and(eq(ticketTags.ticketId, ticket.id), eq(ticketTags.organizationId, tenant.organizationId))),
     db.select({ id: attachments.id, messageId: attachments.messageId, filename: attachments.filename, contentType: attachments.contentType, size: attachments.size }).from(attachments).where(and(eq(attachments.ticketId, ticket.id), eq(attachments.organizationId, tenant.organizationId))),
   ]);
@@ -169,38 +191,16 @@ ticketRoutes.get("/:id", async (context) => {
 
 ticketRoutes.patch("/:id", validate("json", updateTicketInput), async (context) => {
   const tenant = context.get("tenant");
-  const input = context.req.valid("json");
-  if (input.assignedUserId) await assertActiveMember(context.env.DB, tenant.organizationId, input.assignedUserId);
-  if (input.assignedTeamId) await assertTeam(context.env.DB, tenant.organizationId, input.assignedTeamId);
-  const db = createDb(context.env.DB);
-  const [current] = await db.select().from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
-  if (!current) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
-  if (input.version !== undefined && input.version !== current.version) throw new HttpError(409, "ticket_version_conflict", "This ticket changed in another session. Refresh and try again.");
-  const now = new Date();
-  const { version: expectedVersion, ...changes } = input;
-  const updateResult = await db.update(tickets).set({
-    ...changes,
-    resolvedAt: input.status === "resolved" ? now : input.status ? null : current.resolvedAt,
-    closedAt: input.status === "closed" ? now : input.status ? null : current.closedAt,
-    updatedAt: now,
-    version: current.version + 1,
-  }).where(and(eq(tickets.id, current.id), eq(tickets.organizationId, tenant.organizationId), expectedVersion === undefined ? undefined : eq(tickets.version, expectedVersion)));
-  if (!updateResult.meta.changes) throw new HttpError(409, "ticket_version_conflict", "This ticket changed in another session. Refresh and try again.");
-  if (input.assignedUserId !== undefined && input.assignedUserId !== current.assignedUserId) {
-    await db.insert(ticketAssignments).values({ id: newId("asn"), organizationId: tenant.organizationId, ticketId: current.id, assignedToUserId: input.assignedUserId, assignedByUserId: tenant.userId });
-    if (input.assignedUserId && input.assignedUserId !== tenant.userId) await db.insert(notifications).values({ id: newId("ntf"), organizationId: tenant.organizationId, userId: input.assignedUserId, ticketId: current.id, type: "ticket.assigned", title: `Ticket #${current.number} was assigned to you` });
-    await recordActivity(db, tenant, { ticketId: current.id, eventType: "ticket.assigned", entityType: "ticket", entityId: current.id, metadata: { from: current.assignedUserId, to: input.assignedUserId } });
-  }
-  if (input.status && input.status !== current.status) await recordActivity(db, tenant, { ticketId: current.id, eventType: "ticket.status_changed", entityType: "ticket", entityId: current.id, metadata: { from: current.status, to: input.status } });
-  if (input.priority && input.priority !== current.priority) await recordActivity(db, tenant, { ticketId: current.id, eventType: "ticket.priority_changed", entityType: "ticket", entityId: current.id, metadata: { from: current.priority, to: input.priority } });
-  return context.json({ ticket: { ...current, ...changes, version: current.version + 1, updatedAt: now } });
+  const { version, ...changes } = context.req.valid("json");
+  const ticket = await applyTicketUpdate(context.env, tenant, context.req.param("id"), changes, { expectedVersion: version });
+  return context.json({ ticket });
 });
 
 ticketRoutes.post("/:id/messages", validate("json", messageInput), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const db = createDb(context.env.DB);
-  const [ticket] = await db.select({ id: tickets.id, customerId: tickets.customerId }).from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
+  const [ticket] = await db.select({ id: tickets.id, customerId: tickets.customerId, status: tickets.status }).from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
   if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
   if (input.clientMessageId) {
     const existing = await db.select({ id: messages.id, createdAt: messages.createdAt }).from(messages).where(and(eq(messages.organizationId, tenant.organizationId), eq(messages.clientMessageId, input.clientMessageId))).limit(1).then((rows) => rows[0]);
@@ -209,6 +209,9 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
   const id = newId("msg");
   const outboundJobId = newId("omj");
   const now = new Date();
+  // An agent reply hands the conversation back to the customer; internal notes,
+  // and tickets already waiting, resolved, or closed, keep the status they had.
+  const handsOffToCustomer = input.kind === "message" && (ticket.status === "open" || ticket.status === "pending");
   const insertMessage = db.insert(messages).values({ id, organizationId: tenant.organizationId, ticketId: ticket.id, authorType: "agent", authorUserId: tenant.userId, kind: input.kind, bodyText: input.body, normalizedSearch: normalizeSearch(input.body), clientMessageId: input.clientMessageId, deliveryStatus: input.kind === "message" ? "queued" : "received" });
   const updateTicket = db.update(tickets).set({ updatedAt: now, lastReplyAt: input.kind === "message" ? now : undefined, lastAgentReplyAt: input.kind === "message" ? now : undefined, lastMessagePreview: preview(input.body), messageCount: sql`${tickets.messageCount} + 1`, version: sql`${tickets.version} + 1` }).where(and(eq(tickets.id, ticket.id), eq(tickets.organizationId, tenant.organizationId)));
   if (input.kind === "message") {
@@ -216,8 +219,14 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
   } else {
     await db.batch([insertMessage, updateTicket]);
   }
+  if (handsOffToCustomer) {
+    await context.env.DB.prepare("UPDATE tickets SET status = 'waiting_customer', waiting_since = ? WHERE organization_id = ? AND id = ?").bind(now.getTime(), tenant.organizationId, ticket.id).run();
+  }
   await refreshTicketSearch(context.env.DB, tenant.organizationId, ticket.id);
   await recordActivity(db, tenant, { ticketId: ticket.id, eventType: input.kind === "internal_note" ? "ticket.note_added" : "ticket.agent_replied", entityType: "message", entityId: id });
+  if (handsOffToCustomer) {
+    await recordActivity(db, tenant, { ticketId: ticket.id, eventType: "ticket.status_changed", entityType: "ticket", entityId: ticket.id, metadata: { from: ticket.status, to: "waiting_customer" } });
+  }
   if (input.kind === "message") await context.env.OUTBOUND_MAIL_QUEUE.send({ kind: "outbound-mail", jobId: outboundJobId });
   return context.json({ message: { id, ticketId: ticket.id, authorType: "agent", kind: input.kind, bodyText: input.body, createdAt: now } }, 201);
 });
@@ -226,11 +235,8 @@ ticketRoutes.post("/:id/tags", validate("json", z.object({ tagId: z.string().min
   const tenant = context.get("tenant");
   const tagId = context.req.valid("json").tagId;
   const db = createDb(context.env.DB);
-  const [pair] = await Promise.all([
-    db.select({ id: tickets.id }).from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1),
-    db.select({ id: tags.id }).from(tags).where(and(eq(tags.id, tagId), eq(tags.organizationId, tenant.organizationId))).limit(1),
-  ]);
-  if (!pair.length) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
+  const [ticket] = await db.select({ id: tickets.id }).from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
+  if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
   const [tag] = await db.select({ id: tags.id }).from(tags).where(and(eq(tags.id, tagId), eq(tags.organizationId, tenant.organizationId))).limit(1);
   if (!tag) throw new HttpError(404, "tag_not_found", "Tag not found.");
   await db.insert(ticketTags).values({ organizationId: tenant.organizationId, ticketId: context.req.param("id"), tagId }).onConflictDoNothing();
@@ -257,22 +263,6 @@ ticketRoutes.delete("/:id/tags/:tagId", async (context) => {
   return context.body(null, 204);
 });
 
-async function assertActiveMember(database: D1Database, organizationId: string, userId: string) {
-  const [member] = await createDb(database).select({ userId: organizationMemberships.userId }).from(organizationMemberships).where(and(
-    eq(organizationMemberships.organizationId, organizationId),
-    eq(organizationMemberships.userId, userId),
-    isNull(organizationMemberships.disabledAt),
-  )).limit(1);
-  if (!member) throw new HttpError(404, "member_not_found", "Team member not found.");
-}
-
-async function assertTeam(database: D1Database, organizationId: string, teamId: string) {
-  const [team] = await createDb(database).select({ id: teams.id }).from(teams).where(and(eq(teams.organizationId, organizationId), eq(teams.id, teamId))).limit(1);
-  if (!team) throw new HttpError(404, "team_not_found", "Team not found.");
-}
-
-function preview(value: string) { return value.replace(/\s+/g, " ").trim().slice(0, 280); }
-
 function encodeCursor(value: { updatedAt: number; id: string }) {
   return btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
@@ -287,12 +277,4 @@ function decodeCursor(value?: string) {
 
 function toFtsQuery(value: string) {
   return value.split(/\s+/).map((term) => term.replace(/[^a-z0-9@._-]/gi, "")).filter(Boolean).slice(0, 8).map((term) => `"${term.replaceAll('"', '""')}"*`).join(" AND ");
-}
-
-async function refreshTicketSearch(database: D1Database, organizationId: string, ticketId: string) {
-  const row = await database.prepare("SELECT t.normalized_search || ' ' || coalesce((SELECT group_concat(m.normalized_search, ' ') FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id), '') || ' ' || coalesce((SELECT group_concat(g.name, ' ') FROM ticket_tags tt JOIN tags g ON g.id = tt.tag_id AND g.organization_id = tt.organization_id WHERE tt.organization_id = t.organization_id AND tt.ticket_id = t.id), '') AS content FROM tickets t WHERE t.organization_id = ? AND t.id = ?").bind(organizationId, ticketId).first<{ content: string }>();
-  await database.batch([
-    database.prepare("DELETE FROM ticket_search WHERE organization_id = ? AND ticket_id = ?").bind(organizationId, ticketId),
-    database.prepare("INSERT INTO ticket_search (organization_id, ticket_id, content) VALUES (?, ?, ?)").bind(organizationId, ticketId, row?.content ?? ""),
-  ]);
 }

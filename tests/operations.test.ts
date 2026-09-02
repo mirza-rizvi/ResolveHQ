@@ -39,7 +39,7 @@ describe("operational workflows", () => {
     expect(listBody.hasMore).toBe(true);
     expect(listBody.nextCursor).toBeTruthy();
     const dashboard = await request("/operations/dashboard", {}, workspace);
-    expect(await dashboard.json()).toMatchObject({ metrics: { openTickets: 55, unassignedTickets: 55 } });
+    expect(await dashboard.json()).toMatchObject({ metrics: { waitingForCustomer: 55, unassignedTickets: 55 } });
   });
 
   it("isolates dev-mail captures by organization, lists system mail addressed to the caller, and blocks non-admin roles", async () => {
@@ -100,5 +100,19 @@ describe("operational workflows", () => {
 
     const resendConfiguredResponse = await app.request("http://localhost:8787/api/operations/dev-mail", { headers: { cookie: workspace.cookie } }, { ...env, RESEND_API_KEY: "re_test_key" });
     expect(resendConfiguredResponse.status).toBe(404);
+  });
+
+  it("bulk updates refuse cross-tenant assignees and report skipped tickets", async () => {
+    const alpha = await signup("bulk-alpha");
+    const beta = await signup("bulk-beta");
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "B", email: "b@example.test" }) }, alpha)).json() as { customer: { id: string } }).customer;
+    const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "Bulk", message: "x" }) }, alpha)).json() as { ticket: { id: string } }).ticket;
+    const crossTenant = await request("/operations/tickets/bulk", { method: "POST", body: JSON.stringify({ ticketIds: [ticket.id], assignedUserId: beta.userId }) }, alpha);
+    expect(crossTenant.status).toBe(404);
+    const result = await (await request("/operations/tickets/bulk", { method: "POST", body: JSON.stringify({ ticketIds: [ticket.id, "tkt_missing"], status: "resolved" }) }, alpha)).json() as { updated: number; skipped: Array<{ ticketId: string }> };
+    expect(result.updated).toBe(1);
+    expect(result.skipped).toEqual([{ ticketId: "tkt_missing", reason: "ticket_not_found" }]);
+    const row = await env.DB.prepare("SELECT resolved_at AS resolvedAt, version FROM tickets WHERE id = ?").bind(ticket.id).first<{ resolvedAt: number | null; version: number }>();
+    expect(row?.resolvedAt).not.toBeNull(); expect(row?.version).toBe(2);
   });
 });

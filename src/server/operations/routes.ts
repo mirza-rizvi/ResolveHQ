@@ -4,10 +4,11 @@ import { z } from "zod";
 import { recordActivity } from "../activity/service";
 import { requireAuth, requireRole } from "../auth/middleware";
 import { createDb } from "../db";
-import { notifications, savedViews, teamMembers, teams, ticketDrafts, ticketReadStates, tickets } from "../db/schema";
+import { notifications, savedViews, teamMembers, teams, ticketDrafts, ticketReadStates } from "../db/schema";
 import { HttpError } from "../http/errors";
 import { validate } from "../http/validate";
 import { newId } from "../lib/id";
+import { applyTicketUpdate, type TicketChanges } from "../tickets/service";
 import type { HonoEnv } from "../types";
 import { ticketPriorities, ticketStatuses } from "../../shared/domain";
 
@@ -139,16 +140,26 @@ operationRoutes.post("/tickets/bulk", validate("json", z.object({ ticketIds: z.a
   const input = context.req.valid("json");
   if (input.status === undefined && input.priority === undefined && input.assignedUserId === undefined) throw new HttpError(400, "empty_bulk_action", "Choose at least one change.");
   const db = createDb(context.env.DB);
+  const changes: TicketChanges = { status: input.status, priority: input.priority, assignedUserId: input.assignedUserId };
+  const skipped: Array<{ ticketId: string; reason: string }> = [];
   let updated = 0;
   for (const ticketId of input.ticketIds) {
-    const ticket = await db.select({ id: tickets.id }).from(tickets).where(and(eq(tickets.organizationId, tenant.organizationId), eq(tickets.id, ticketId))).limit(1).then((rows) => rows[0]);
-    if (!ticket) continue;
-    await db.update(tickets).set({ status: input.status, priority: input.priority, assignedUserId: input.assignedUserId, updatedAt: new Date(), version: undefined }).where(and(eq(tickets.organizationId, tenant.organizationId), eq(tickets.id, ticketId)));
-    await context.env.DB.prepare("UPDATE tickets SET version = version + 1 WHERE organization_id = ? AND id = ?").bind(tenant.organizationId, ticketId).run();
+    try {
+      await applyTicketUpdate(context.env, tenant, ticketId, changes);
+    } catch (error) {
+      // A ticket that is gone (or belongs to another workspace) is reported and
+      // skipped; every other failure, such as an assignee outside this
+      // workspace, fails the whole request instead of silently doing less.
+      if (error instanceof HttpError && error.status === 404 && error.code === "ticket_not_found") {
+        skipped.push({ ticketId, reason: error.code });
+        continue;
+      }
+      throw error;
+    }
     await recordActivity(db, tenant, { ticketId, eventType: "ticket.bulk_updated", entityType: "ticket", entityId: ticketId, metadata: { status: input.status, priority: input.priority, assignedUserId: input.assignedUserId } });
     updated += 1;
   }
-  return context.json({ updated });
+  return context.json({ updated, skipped });
 });
 
 operationRoutes.get("/dev-mail", requireRole("admin"), async (context) => {

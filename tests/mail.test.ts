@@ -123,6 +123,8 @@ describe("mail queue workflow", () => {
     const { request } = await import("./helpers");
     const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "Nina", email: "nina@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
     const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "No inbox", message: "Original request" }) }, workspace)).json() as { ticket: { id: string } }).ticket;
+    const settings = await (await request("/organization/settings", {}, workspace)).json() as { inboxes: Array<{ id: string }> };
+    expect((await request(`/organization/inboxes/${settings.inboxes[0].id}`, { method: "PATCH", body: JSON.stringify({ disabled: true }) }, workspace)).status).toBe(200);
     const reply = await (await request(`/tickets/${ticket.id}/messages`, { method: "POST", body: JSON.stringify({ body: "Reply body", kind: "message" }) }, workspace)).json() as { message: { id: string } };
     const job = await env.DB.prepare("SELECT id FROM outbound_mail_jobs WHERE message_id = ?").bind(reply.message.id).first<{ id: string }>();
 
