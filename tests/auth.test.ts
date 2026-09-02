@@ -29,4 +29,24 @@ describe("authentication", () => {
     const rejected = await request("/customers", { method: "POST", body: JSON.stringify({ name: "No CSRF", email: "no-csrf@example.test" }), headers: { cookie: session.cookie, origin: env.APP_URL } });
     expect(rejected.status).toBe(403);
   });
+
+  it("resets a password through a captured email link and invalidates old sessions", async () => {
+    const workspace = await signup("reset");
+    const email = "owner-reset@example.test";
+    expect((await request("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) })).status).toBe(200);
+    const capture = await env.DB.prepare("SELECT text FROM mail_captures WHERE to_address = ? ORDER BY created_at DESC LIMIT 1").bind(email).first<{ text: string }>();
+    const token = /token=([A-Za-z0-9_-]+)/.exec(capture!.text)![1];
+    expect((await request("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, password: "a-brand-new-password-1" }) })).status).toBe(200);
+    expect((await request("/auth/me", {}, workspace)).status).toBe(401);
+    expect((await request("/auth/login", { method: "POST", body: JSON.stringify({ email, password: "a-secure-test-password" }) })).status).toBe(401);
+    expect((await request("/auth/login", { method: "POST", body: JSON.stringify({ email, password: "a-brand-new-password-1" }) })).status).toBe(200);
+    expect((await request("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, password: "another-new-password-2" }) })).status).toBe(404);
+  });
+
+  it("changes a password with the current one", async () => {
+    const workspace = await signup("change");
+    expect((await request("/auth/change-password", { method: "POST", body: JSON.stringify({ currentPassword: "wrong-password-value", newPassword: "a-brand-new-password-3" }) }, workspace)).status).toBe(401);
+    expect((await request("/auth/change-password", { method: "POST", body: JSON.stringify({ currentPassword: "a-secure-test-password", newPassword: "a-brand-new-password-3" }) }, workspace)).status).toBe(200);
+    expect((await request("/auth/login", { method: "POST", body: JSON.stringify({ email: "owner-change@example.test", password: "a-brand-new-password-3" }) })).status).toBe(200);
+  });
 });

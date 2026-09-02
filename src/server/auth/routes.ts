@@ -1,13 +1,14 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { z } from "zod";
 import { createDb } from "resolve-server/db";
-import { organizationInvitations, organizationMemberships, organizations, sessions, users } from "resolve-server/db/schema";
+import { organizationInvitations, organizationMemberships, organizations, passwordResetTokens, sessions, users } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import { newId } from "resolve-server/lib/id";
-import { sha256 } from "resolve-server/lib/crypto";
+import { randomToken, sha256 } from "resolve-server/lib/crypto";
+import { sendSystemMail } from "resolve-server/mail/system";
 import type { HonoEnv } from "resolve-server/types";
 import { hashPassword, verifyPassword } from "./password";
 import { clearSessionCookies, createSession, SESSION_COOKIE } from "./session";
@@ -116,6 +117,53 @@ authRoutes.post("/accept-invitation", validate("json", z.object({
   ]);
   const csrfToken = await createSession(context, userId, invitation.organizationId);
   return context.json({ user: { id: userId, email: invitation.email, name: input.name }, organizationId: invitation.organizationId, role: invitation.role, csrfToken }, 201);
+});
+
+authRoutes.post("/forgot-password", validate("json", z.object({ email: z.string().trim().email().max(254).transform((v) => v.toLowerCase()) })), async (context) => {
+  const ip = context.req.header("cf-connecting-ip") ?? "local";
+  const { email } = context.req.valid("json");
+  const [byIp, byEmail] = await Promise.all([context.env.AUTH_RATE_LIMIT.limit({ key: `forgot:ip:${ip}` }), context.env.AUTH_RATE_LIMIT.limit({ key: `forgot:email:${email}` })]);
+  if (!byIp.success || !byEmail.success) throw new HttpError(429, "rate_limited", "Too many requests. Try again shortly.");
+  const db = createDb(context.env.DB);
+  const [user] = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.email, email), isNull(users.disabledAt))).limit(1);
+  if (user) {
+    const token = randomToken();
+    await db.insert(passwordResetTokens).values({ id: newId("prt"), userId: user.id, tokenHash: await sha256(`${token}.${context.env.SESSION_PEPPER}`), expiresAt: new Date(Date.now() + 30 * 60 * 1000) });
+    try { await sendSystemMail(context.env, { to: email, subject: "Reset your ResolveHQ password", text: `Hi ${user.name},\n\nReset your password within 30 minutes:\n${context.env.APP_URL}/reset-password?token=${encodeURIComponent(token)}\n\nIf you did not request this, ignore this email.` }); }
+    catch (error) { console.error("Password reset mail failed", error); }
+  }
+  return context.json({ ok: true });
+});
+
+authRoutes.post("/reset-password", validate("json", z.object({ token: z.string().min(20).max(200), password: z.string().min(12).max(128) })), async (context) => {
+  const ip = context.req.header("cf-connecting-ip") ?? "local";
+  if (!(await context.env.AUTH_RATE_LIMIT.limit({ key: `reset:${ip}` })).success) throw new HttpError(429, "rate_limited", "Too many requests. Try again shortly.");
+  const input = context.req.valid("json");
+  const db = createDb(context.env.DB);
+  const tokenHash = await sha256(`${input.token}.${context.env.SESSION_PEPPER}`);
+  const [row] = await db.select().from(passwordResetTokens).where(and(eq(passwordResetTokens.tokenHash, tokenHash), isNull(passwordResetTokens.usedAt))).limit(1);
+  if (!row || row.expiresAt <= new Date()) throw new HttpError(404, "reset_invalid", "This reset link is invalid or has expired.");
+  await db.batch([
+    db.update(users).set({ passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER), updatedAt: new Date() }).where(eq(users.id, row.userId)),
+    db.update(passwordResetTokens).set({ usedAt: new Date() }).where(eq(passwordResetTokens.id, row.id)),
+    db.delete(sessions).where(eq(sessions.userId, row.userId)),
+  ]);
+  return context.json({ ok: true });
+});
+
+authRoutes.post("/change-password", requireAuth, validate("json", z.object({ currentPassword: z.string().min(1).max(128), newPassword: z.string().min(12).max(128) })), async (context) => {
+  const tenant = context.get("tenant");
+  const input = context.req.valid("json");
+  const db = createDb(context.env.DB);
+  const [user] = await db.select({ passwordHash: users.passwordHash }).from(users).where(eq(users.id, tenant.userId)).limit(1);
+  if (!user || !(await verifyPassword(input.currentPassword, user.passwordHash, context.env.SESSION_PEPPER))) throw new HttpError(401, "invalid_credentials", "Your current password is incorrect.");
+  const token = getCookie(context, SESSION_COOKIE) ?? "";
+  const currentHash = await sha256(`${token}.${context.env.SESSION_PEPPER}`);
+  await db.batch([
+    db.update(users).set({ passwordHash: await hashPassword(input.newPassword, context.env.SESSION_PEPPER), updatedAt: new Date() }).where(eq(users.id, tenant.userId)),
+    db.delete(sessions).where(and(eq(sessions.userId, tenant.userId), ne(sessions.tokenHash, currentHash))),
+  ]);
+  return context.json({ ok: true });
 });
 
 authRoutes.get("/me", requireAuth, async (context) => {

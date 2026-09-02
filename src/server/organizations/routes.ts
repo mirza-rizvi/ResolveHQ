@@ -6,6 +6,7 @@ import { inboxes, organizationInvitations, organizationMemberships, organization
 import { requireAuth, requireRole } from "resolve-server/auth/middleware";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
+import { sendSystemMail } from "resolve-server/mail/system";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import type { HonoEnv } from "resolve-server/types";
@@ -89,7 +90,19 @@ organizationRoutes.post("/invitations", requireRole("admin"), validate("json", i
     invitedByUserId: tenant.userId,
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   });
-  return context.json({ invitation: { id: invitationId, email: input.email, role: input.role, inviteUrl: `${context.env.APP_URL}/accept-invite?token=${encodeURIComponent(token)}` } }, 201);
+  const inviteUrl = `${context.env.APP_URL}/accept-invite?token=${encodeURIComponent(token)}`;
+  const [workspace] = await db.select({ name: organizations.name }).from(organizations).where(eq(organizations.id, tenant.organizationId)).limit(1);
+  const workspaceName = workspace?.name ?? "ResolveHQ";
+  try {
+    await sendSystemMail(context.env, {
+      to: input.email,
+      subject: `You're invited to ${workspaceName} on ResolveHQ`,
+      text: `Join the ${workspaceName} support workspace:\n${inviteUrl}\n\nThis link expires in 7 days.`,
+    });
+  } catch (error) {
+    console.error("Invitation mail failed", error);
+  }
+  return context.json({ invitation: { id: invitationId, email: input.email, role: input.role, inviteUrl } }, 201);
 });
 
 organizationRoutes.patch("/members/:userId", requireRole("admin"), validate("json", z.object({ role: z.enum(["admin", "agent"]).optional(), disabled: z.boolean().optional() })), async (context) => {
