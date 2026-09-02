@@ -109,14 +109,6 @@ export interface SavedView {
 
 export type MessageKind = "message" | "internal_note";
 
-export type QueueKey =
-  | "all"
-  | "open"
-  | "pending"
-  | "unassigned"
-  | "mine"
-  | "waiting_customer"
-  | "resolved"
-  | "closed";
+export type QueueKey = "all" | "open" | "pending" | "unassigned" | "mine" | "waiting_customer" | "resolved" | "closed";
 
 export type QueueCounts = Record<QueueKey, number>;

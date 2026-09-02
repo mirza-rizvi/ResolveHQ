@@ -7,7 +7,7 @@ const allowedTags = new Set(["p", "br", "strong", "b", "em", "i", "u", "ul", "ol
 const voidTags = new Set(["br"]);
 const rawTextTags = new Set(["script", "style"]);
 const safeSchemes = /^(https?:|mailto:)/i;
-const namedEntities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: "\u00a0" };
+const namedEntities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
 const maxInput = 200_000;
 const maxOutput = 200_000;
 
@@ -27,15 +27,19 @@ export function sanitizeHtml(input: string): string {
     // the open-tag stack is still flushed below, so the result stays balanced.
     if (!skipping) {
       const text = escapeText(source.slice(last, match.index));
-      if (out.length + text.length > maxOutput) { out += truncateEscaped(text, maxOutput - out.length); break; }
+      if (out.length + text.length > maxOutput) {
+        out += truncateEscaped(text, maxOutput - out.length);
+        break;
+      }
       out += text;
     }
     last = tagPattern.lastIndex;
     const name = match[1].toLowerCase();
     const closing = match[0].startsWith("</");
     if (rawTextTags.has(name)) {
-      if (closing) { if (skipping === name) skipping = ""; }
-      else if (!skipping) skipping = name;
+      if (closing) {
+        if (skipping === name) skipping = "";
+      } else if (!skipping) skipping = name;
       continue;
     }
     if (skipping || !allowedTags.has(name)) continue;
@@ -73,21 +77,31 @@ function openAnchor(attributes: string) {
   // to a tab inside the scheme, and an allow-list of `http(s):` and `mailto:`
   // rejects it either way.
   const value = stripControls(decodeEntities(href?.[2] ?? href?.[3] ?? href?.[4] ?? "")).trim();
-  return safeSchemes.test(value) ? `<a href="${escapeAttribute(value)}" rel="noopener noreferrer" target="_blank">` : "<a>";
+  return safeSchemes.test(value)
+    ? `<a href="${escapeAttribute(value)}" rel="noopener noreferrer" target="_blank">`
+    : "<a>";
 }
 
 // Browsers drop control characters from a URL before resolving it, so the same
 // characters are dropped here and the stored href matches what a client follows.
 function stripControls(value: string) {
-  return [...value].filter((character) => { const code = character.codePointAt(0) ?? 0; return code > 0x1f && code !== 0x7f; }).join("");
+  return [...value]
+    .filter((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code > 0x1f && code !== 0x7f;
+    })
+    .join("");
 }
 
 function decodeEntities(value: string) {
-  return value.replace(/&(?:#[xX]([0-9a-fA-F]+)|#([0-9]+)|([a-zA-Z][a-zA-Z0-9]*));?/g, (whole, hex?: string, decimal?: string, name?: string) => {
-    if (hex !== undefined) return fromCodePoint(Number.parseInt(hex, 16));
-    if (decimal !== undefined) return fromCodePoint(Number.parseInt(decimal, 10));
-    return namedEntities[(name ?? "").toLowerCase()] ?? whole;
-  });
+  return value.replace(
+    /&(?:#[xX]([0-9a-fA-F]+)|#([0-9]+)|([a-zA-Z][a-zA-Z0-9]*));?/g,
+    (whole, hex?: string, decimal?: string, name?: string) => {
+      if (hex !== undefined) return fromCodePoint(Number.parseInt(hex, 16));
+      if (decimal !== undefined) return fromCodePoint(Number.parseInt(decimal, 10));
+      return namedEntities[(name ?? "").toLowerCase()] ?? whole;
+    },
+  );
 }
 
 function fromCodePoint(code: number) {
@@ -106,5 +120,5 @@ function escapeText(value: string) {
 }
 
 function escapeAttribute(value: string) {
-  return escapeText(value).replaceAll("\"", "&quot;").replaceAll("'", "&#39;");
+  return escapeText(value).replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }

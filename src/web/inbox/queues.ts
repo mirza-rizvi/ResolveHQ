@@ -1,4 +1,14 @@
-import { Archive, Check, Clock3, Inbox as InboxIcon, Layers, PauseCircle, UserRound, Users, type LucideIcon } from "lucide-react";
+import {
+  Archive,
+  Check,
+  Clock3,
+  Inbox as InboxIcon,
+  Layers,
+  PauseCircle,
+  UserRound,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import type { QueueKey, SavedViewFilters } from "./types";
 
 export const queueStatuses = ["open", "pending", "waiting_customer", "resolved", "closed"] as const;
@@ -35,7 +45,8 @@ export function filtersForQueue(queue: string): SavedViewFilters {
 
 /** The queue a saved view resolves to when it is applied. */
 export function queueForFilters(filters: SavedViewFilters): QueueKey {
-  if (filters.status && (queueStatuses as readonly string[]).includes(filters.status)) return filters.status as QueueKey;
+  if (filters.status && (queueStatuses as readonly string[]).includes(filters.status))
+    return filters.status as QueueKey;
   if (filters.assignee === "me") return "mine";
   if (filters.assignee === "unassigned") return "unassigned";
   return "all";

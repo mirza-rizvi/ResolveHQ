@@ -56,14 +56,20 @@ export function InboxPage() {
     navigate(`/inbox/${tickets[0].id}?${params}`, { replace: true });
   }, [navigate, params, ticketId, tickets]);
 
-  const selectQueue = useCallback((next: string) => {
-    const target = new URLSearchParams();
-    target.set("queue", next);
-    if (priority) target.set("priority", priority);
-    navigate(`/inbox?${target}`);
-  }, [navigate, priority]);
+  const selectQueue = useCallback(
+    (next: string) => {
+      const target = new URLSearchParams();
+      target.set("queue", next);
+      if (priority) target.set("priority", priority);
+      navigate(`/inbox?${target}`);
+    },
+    [navigate, priority],
+  );
 
-  const closeCreateDialog = useCallback(() => { setCreateOpen(false); setCreateError(""); }, []);
+  const closeCreateDialog = useCallback(() => {
+    setCreateOpen(false);
+    setCreateError("");
+  }, []);
   const closeCustomerDetail = useCallback(() => setCustomerId(""), []);
 
   useInboxShortcuts({
@@ -71,20 +77,32 @@ export function InboxPage() {
     ticketId,
     canCompose: Boolean(conversation.conversation),
     onEscape: useCallback(() => {
-      if (customerId) { setCustomerId(""); return; }
-      if (createOpen) { closeCreateDialog(); return; }
+      if (customerId) {
+        setCustomerId("");
+        return;
+      }
+      if (createOpen) {
+        closeCreateDialog();
+        return;
+      }
       if (ticketId && window.matchMedia("(max-width: 900px)").matches) navigate(`/inbox?${params}`);
     }, [closeCreateDialog, createOpen, customerId, navigate, params, ticketId]),
     onFocusSearch: useCallback(() => searchInput.current?.focus(), []),
     onSelectTicket: useCallback((id: string) => navigate(`/inbox/${id}?${params}`), [navigate, params]),
-    onCompose: useCallback((kind: MessageKind) => {
-      draft.setKind(kind);
-      window.requestAnimationFrame(() => composerForm.current?.querySelector<HTMLElement>("[contenteditable='true']")?.focus());
-    }, [draft]),
+    onCompose: useCallback(
+      (kind: MessageKind) => {
+        draft.setKind(kind);
+        window.requestAnimationFrame(() =>
+          composerForm.current?.querySelector<HTMLElement>("[contenteditable='true']")?.focus(),
+        );
+      },
+      [draft],
+    ),
   });
 
   const createTicket = useMutation({
-    mutationFn: (input: Record<string, FormDataEntryValue | null>) => api<{ ticket: { id: string } }>("/tickets", { method: "POST", body: JSON.stringify(input) }),
+    mutationFn: (input: Record<string, FormDataEntryValue | null>) =>
+      api<{ ticket: { id: string } }>("/tickets", { method: "POST", body: JSON.stringify(input) }),
     onError: (error) => setCreateError(error.message),
     onSuccess: (result) => {
       closeCreateDialog();
@@ -95,14 +113,20 @@ export function InboxPage() {
   });
 
   const bulkUpdate = useMutation({
-    mutationFn: (changes: Record<string, unknown>) => api<{ updated: number; skipped: Array<{ ticketId: string; reason: string }> }>("/operations/tickets/bulk", {
-      method: "POST",
-      body: JSON.stringify({ ticketIds: selectedTickets, ...changes }),
-    }),
+    mutationFn: (changes: Record<string, unknown>) =>
+      api<{ updated: number; skipped: Array<{ ticketId: string; reason: string }> }>("/operations/tickets/bulk", {
+        method: "POST",
+        body: JSON.stringify({ ticketIds: selectedTickets, ...changes }),
+      }),
     onError: (error) => toast.push(error.message, "error"),
     onSuccess: (result) => {
       setSelectedTickets([]);
-      toast.push(result.skipped.length ? `${result.updated} updated · ${result.skipped.length} skipped` : `${result.updated} updated`, result.skipped.length ? "info" : "success");
+      toast.push(
+        result.skipped.length
+          ? `${result.updated} updated · ${result.skipped.length} skipped`
+          : `${result.updated} updated`,
+        result.skipped.length ? "info" : "success",
+      );
       void queryClient.invalidateQueries({ queryKey: ["tickets"] });
       void queryClient.invalidateQueries({ queryKey: ["ticket-counts"] });
       if (ticketId) void queryClient.invalidateQueries({ queryKey: ["conversation", ticketId] });
@@ -121,7 +145,10 @@ export function InboxPage() {
   }
 
   function saveCurrentView() {
-    workspace.createView({ name: `${queueLabel(queue)} tickets`, filters: { ...filtersForQueue(queue), ...(priority ? { priority } : {}) } });
+    workspace.createView({
+      name: `${queueLabel(queue)} tickets`,
+      filters: { ...filtersForQueue(queue), ...(priority ? { priority } : {}) },
+    });
   }
 
   function applyView(view: SavedView) {
@@ -143,71 +170,80 @@ export function InboxPage() {
     });
   }
 
-  return <div className="inbox-layout">
-    <QueueSidebar
-      queue={queue}
-      counts={counts}
-      savedViews={workspace.savedViews}
-      onSelectQueue={selectQueue}
-      onSaveView={saveCurrentView}
-      onApplyView={applyView}
-      onDeleteView={workspace.deleteView}
-    />
-    <TicketLedger
-      tickets={tickets}
-      ticketId={ticketId}
-      queue={queue}
-      params={params}
-      loading={ticketsPending}
-      error={ticketsError ? errorMessage(ticketsError, "Could not load the queue.") : ""}
-      query={query}
-      onQueryChange={setQuery}
-      searchInputRef={searchInput}
-      priority={priority}
-      onPriorityChange={(value) => {
-        const next = new URLSearchParams(params);
-        if (value) next.set("priority", value); else next.delete("priority");
-        setParams(next);
-      }}
-      selectedTickets={selectedTickets}
-      onToggleSelected={(id, selected) => setSelectedTickets((current) => selected ? [...current, id].slice(0, 20) : current.filter((entry) => entry !== id))}
-      onClearSelection={() => setSelectedTickets([])}
-      onBulkStatus={(status) => bulkUpdate.mutate({ status })}
-      onSelectQueue={selectQueue}
-      onCreateTicket={() => setCreateOpen(true)}
-    />
-    <ConversationPanel
-      ticketId={ticketId}
-      conversation={conversation.conversation}
-      loading={conversation.isPending}
-      error={conversation.error ? errorMessage(conversation.error, "The conversation could not be loaded.") : ""}
-      onRetry={() => void conversation.refetch()}
-      members={workspace.members}
-      teams={workspace.teams}
-      availableTags={workspace.tags}
-      savedReplies={workspace.savedReplies}
-      onBack={() => navigate(`/inbox?${params}`)}
-      onUpdate={conversation.update}
-      onAddTag={conversation.addTag}
-      onRemoveTag={conversation.removeTag}
-      onOpenCustomer={() => setCustomerId(conversation.conversation?.ticket.customerId ?? "")}
-      composerFormRef={composerForm}
-      messageKind={draft.kind}
-      onMessageKindChange={draft.setKind}
-      draft={draft.body}
-      onDraftChange={draft.setBody}
-      onSend={sendMessage}
-      sending={conversation.sending}
-      draftStatus={draft.status}
-      draftSavedAt={draft.savedAt}
-    />
-    {customerDetail.data && <CustomerSheet detail={customerDetail.data} onClose={closeCustomerDetail} />}
-    {createOpen && <CreateTicketDialog
-      customers={workspace.customers}
-      error={createError}
-      submitting={createTicket.isPending}
-      onClose={closeCreateDialog}
-      onSubmit={submitCreateTicket}
-    />}
-  </div>;
+  return (
+    <div className="inbox-layout">
+      <QueueSidebar
+        queue={queue}
+        counts={counts}
+        savedViews={workspace.savedViews}
+        onSelectQueue={selectQueue}
+        onSaveView={saveCurrentView}
+        onApplyView={applyView}
+        onDeleteView={workspace.deleteView}
+      />
+      <TicketLedger
+        tickets={tickets}
+        ticketId={ticketId}
+        queue={queue}
+        params={params}
+        loading={ticketsPending}
+        error={ticketsError ? errorMessage(ticketsError, "Could not load the queue.") : ""}
+        query={query}
+        onQueryChange={setQuery}
+        searchInputRef={searchInput}
+        priority={priority}
+        onPriorityChange={(value) => {
+          const next = new URLSearchParams(params);
+          if (value) next.set("priority", value);
+          else next.delete("priority");
+          setParams(next);
+        }}
+        selectedTickets={selectedTickets}
+        onToggleSelected={(id, selected) =>
+          setSelectedTickets((current) =>
+            selected ? [...current, id].slice(0, 20) : current.filter((entry) => entry !== id),
+          )
+        }
+        onClearSelection={() => setSelectedTickets([])}
+        onBulkStatus={(status) => bulkUpdate.mutate({ status })}
+        onSelectQueue={selectQueue}
+        onCreateTicket={() => setCreateOpen(true)}
+      />
+      <ConversationPanel
+        ticketId={ticketId}
+        conversation={conversation.conversation}
+        loading={conversation.isPending}
+        error={conversation.error ? errorMessage(conversation.error, "The conversation could not be loaded.") : ""}
+        onRetry={() => void conversation.refetch()}
+        members={workspace.members}
+        teams={workspace.teams}
+        availableTags={workspace.tags}
+        savedReplies={workspace.savedReplies}
+        onBack={() => navigate(`/inbox?${params}`)}
+        onUpdate={conversation.update}
+        onAddTag={conversation.addTag}
+        onRemoveTag={conversation.removeTag}
+        onOpenCustomer={() => setCustomerId(conversation.conversation?.ticket.customerId ?? "")}
+        composerFormRef={composerForm}
+        messageKind={draft.kind}
+        onMessageKindChange={draft.setKind}
+        draft={draft.body}
+        onDraftChange={draft.setBody}
+        onSend={sendMessage}
+        sending={conversation.sending}
+        draftStatus={draft.status}
+        draftSavedAt={draft.savedAt}
+      />
+      {customerDetail.data && <CustomerSheet detail={customerDetail.data} onClose={closeCustomerDetail} />}
+      {createOpen && (
+        <CreateTicketDialog
+          customers={workspace.customers}
+          error={createError}
+          submitting={createTicket.isPending}
+          onClose={closeCreateDialog}
+          onSubmit={submitCreateTicket}
+        />
+      )}
+    </div>
+  );
 }

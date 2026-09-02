@@ -15,12 +15,28 @@ searchRoutes.get("/", async (context) => {
   const ftsQuery = toFtsQuery(query);
   if (ftsQuery === null) return context.json({ results: [] });
   const db = createDb(context.env.DB);
-  const rows = await db.select({
-    id: tickets.id, number: tickets.number, subject: tickets.subject, status: tickets.status, priority: tickets.priority,
-    customerName: customers.name, customerEmail: customers.email, updatedAt: tickets.updatedAt,
-  }).from(tickets)
-    .innerJoin(customers, and(eq(customers.id, tickets.customerId), eq(customers.organizationId, tenant.organizationId)))
-    .where(and(eq(tickets.organizationId, tenant.organizationId), sql`${tickets.id} in (select ticket_id from ticket_search where organization_id = ${tenant.organizationId} and ticket_search match ${ftsQuery})`))
+  const rows = await db
+    .select({
+      id: tickets.id,
+      number: tickets.number,
+      subject: tickets.subject,
+      status: tickets.status,
+      priority: tickets.priority,
+      customerName: customers.name,
+      customerEmail: customers.email,
+      updatedAt: tickets.updatedAt,
+    })
+    .from(tickets)
+    .innerJoin(
+      customers,
+      and(eq(customers.id, tickets.customerId), eq(customers.organizationId, tenant.organizationId)),
+    )
+    .where(
+      and(
+        eq(tickets.organizationId, tenant.organizationId),
+        sql`${tickets.id} in (select ticket_id from ticket_search where organization_id = ${tenant.organizationId} and ticket_search match ${ftsQuery})`,
+      ),
+    )
     .orderBy(desc(tickets.updatedAt))
     .limit(50);
   return context.json({ results: rows });

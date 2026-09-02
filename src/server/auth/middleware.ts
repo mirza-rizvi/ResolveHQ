@@ -12,7 +12,8 @@ export function assertMutationOrigin(context: Context<HonoEnv>): void {
   if (safeMethods.has(context.req.method)) return;
   const expectedOrigin = new URL(context.env.APP_URL).origin;
   const origin = context.req.header("origin");
-  if (!origin || origin !== expectedOrigin) throw new HttpError(403, "invalid_origin", "The request origin is not allowed.");
+  if (!origin || origin !== expectedOrigin)
+    throw new HttpError(403, "invalid_origin", "The request origin is not allowed.");
   const cookieToken = getCookie(context, CSRF_COOKIE) ?? "";
   const headerToken = context.req.header("x-csrf-token") ?? "";
   if (!cookieToken || !headerToken || !constantTimeEqual(cookieToken, headerToken)) {

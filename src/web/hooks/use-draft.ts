@@ -44,7 +44,10 @@ export function useDraft(ticketId?: string) {
     report("saving");
     const run = writes.current.then(async () => {
       try {
-        revisions.current.set(id, (await putDraft(id, text, messageKind, revisions.current.get(id) ?? 0)).draft.revision);
+        revisions.current.set(
+          id,
+          (await putDraft(id, text, messageKind, revisions.current.get(id) ?? 0)).draft.revision,
+        );
       } catch (error) {
         // Another tab saved a newer draft. Take the server's revision and put
         // this text on top of it rather than dropping what was typed here.
@@ -52,10 +55,15 @@ export function useDraft(ticketId?: string) {
           const current = await api<{ draft: StoredDraft | null }>(`/operations/tickets/${id}/draft`).catch(() => null);
           if (current?.draft) revisions.current.set(id, current.draft.revision);
           try {
-            revisions.current.set(id, (await putDraft(id, text, messageKind, revisions.current.get(id) ?? 0)).draft.revision);
+            revisions.current.set(
+              id,
+              (await putDraft(id, text, messageKind, revisions.current.get(id) ?? 0)).draft.revision,
+            );
             report("saved", new Date());
             return;
-          } catch { /* reported as an error below */ }
+          } catch {
+            /* reported as an error below */
+          }
         }
         report("error");
         return;
@@ -73,17 +81,33 @@ export function useDraft(ticketId?: string) {
     setStatus("idle");
     setSavedAt(null);
     setHtml("");
-    if (!ticketId) { setBodyState(""); setKindState("message"); return; }
+    if (!ticketId) {
+      setBodyState("");
+      setKindState("message");
+      return;
+    }
     let cancelled = false;
-    void api<{ draft: StoredDraft | null }>(`/operations/tickets/${ticketId}/draft`).then(({ draft }) => {
-      // Anything typed while the stored draft was in flight wins over it.
-      if (cancelled || edited.current) return;
-      if (draft) { setBodyState(draft.body); setKindState(draft.kind); revisions.current.set(ticketId, draft.revision); }
-      else { setBodyState(""); setKindState("message"); revisions.current.delete(ticketId); }
-    }).catch(() => undefined).finally(() => {
-      if (!cancelled) hydrated.current = ticketId;
-    });
-    return () => { cancelled = true; };
+    void api<{ draft: StoredDraft | null }>(`/operations/tickets/${ticketId}/draft`)
+      .then(({ draft }) => {
+        // Anything typed while the stored draft was in flight wins over it.
+        if (cancelled || edited.current) return;
+        if (draft) {
+          setBodyState(draft.body);
+          setKindState(draft.kind);
+          revisions.current.set(ticketId, draft.revision);
+        } else {
+          setBodyState("");
+          setKindState("message");
+          revisions.current.delete(ticketId);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) hydrated.current = ticketId;
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [ticketId]);
 
   useEffect(() => {

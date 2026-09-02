@@ -39,16 +39,18 @@ export function useConversation(ticketId?: string) {
   };
 
   const update = useMutation({
-    mutationFn: (changes: Record<string, unknown>) => api(`/tickets/${ticketId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ ...changes, version: query.data?.ticket.version }),
-    }),
+    mutationFn: (changes: Record<string, unknown>) =>
+      api(`/tickets/${ticketId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ...changes, version: query.data?.ticket.version }),
+      }),
     onError,
     onSuccess: invalidate,
   });
 
   const addTag = useMutation({
-    mutationFn: (tagId: string) => api(`/tickets/${ticketId}/tags`, { method: "POST", body: JSON.stringify({ tagId }) }),
+    mutationFn: (tagId: string) =>
+      api(`/tickets/${ticketId}/tags`, { method: "POST", body: JSON.stringify({ tagId }) }),
     onError,
     onSuccess: invalidate,
   });
@@ -60,10 +62,11 @@ export function useConversation(ticketId?: string) {
   });
 
   const sendMessage = useMutation({
-    mutationFn: (input: SendMessageInput) => api<{ message: { id: string } }>(`/tickets/${ticketId}/messages`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    }),
+    mutationFn: (input: SendMessageInput) =>
+      api<{ message: { id: string } }>(`/tickets/${ticketId}/messages`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     onError,
     onSuccess: invalidate,
   });
@@ -74,7 +77,9 @@ export function useConversation(ticketId?: string) {
     isPending: Boolean(ticketId) && query.isPending,
     refetch: query.refetch,
     update: (changes: Record<string, unknown>) => update.mutate(changes),
-    addTag: (tagId: string) => { if (tagId) addTag.mutate(tagId); },
+    addTag: (tagId: string) => {
+      if (tagId) addTag.mutate(tagId);
+    },
     removeTag: (tagId: string) => removeTag.mutate(tagId),
     sendMessage: (input: SendMessageInput) => sendMessage.mutateAsync(input),
     sending: sendMessage.isPending,

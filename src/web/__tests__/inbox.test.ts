@@ -5,7 +5,10 @@ import { formatBytes, relativeTime } from "@/web/inbox/format";
 import { filtersForQueue, queueForFilters, queueLabel } from "@/web/inbox/queues";
 import { chordPending, clearChord, startChord } from "@/web/lib/chord";
 
-afterEach(() => { clearChord(); vi.useRealTimers(); });
+afterEach(() => {
+  clearChord();
+  vi.useRealTimers();
+});
 
 describe("chord", () => {
   it("is not pending until a chord starts", () => {
@@ -75,7 +78,9 @@ describe("resolveContentType", () => {
   it("falls back to the extension when the browser reports something else", () => {
     expect(resolveContentType({ name: "archive.zip", type: "application/x-zip-compressed" })).toBe("application/zip");
     expect(resolveContentType({ name: "rows.csv", type: "" })).toBe("text/csv");
-    expect(resolveContentType({ name: "report.XLSX", type: "" })).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    expect(resolveContentType({ name: "report.XLSX", type: "" })).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
   });
 
   it("rejects a file that is neither an allowed type nor an allowed extension", () => {

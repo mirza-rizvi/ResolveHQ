@@ -31,10 +31,18 @@ export async function createSession(context: Context<HonoEnv>, userId: string, o
 
   const secure = context.env.APP_URL.startsWith("https://");
   setCookie(context, SESSION_COOKIE, token, {
-    httpOnly: true, secure, sameSite: "Lax", path: "/", maxAge: sessionDurationSeconds,
+    httpOnly: true,
+    secure,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: sessionDurationSeconds,
   });
   setCookie(context, CSRF_COOKIE, csrfToken, {
-    httpOnly: false, secure, sameSite: "Lax", path: "/", maxAge: sessionDurationSeconds,
+    httpOnly: false,
+    secure,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: sessionDurationSeconds,
   });
   return csrfToken;
 }
@@ -57,21 +65,26 @@ export async function resolveTenant(context: Context<HonoEnv>): Promise<TenantCo
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
     .innerJoin(organizations, eq(organizations.id, sessions.organizationId))
-    .innerJoin(organizationMemberships, and(
-      eq(organizationMemberships.userId, sessions.userId),
-      eq(organizationMemberships.organizationId, sessions.organizationId),
-    ))
-    .where(and(
-      eq(sessions.tokenHash, tokenHash),
-      gt(sessions.expiresAt, now),
-      isNull(users.disabledAt),
-      isNull(organizationMemberships.disabledAt),
-    ))
+    .innerJoin(
+      organizationMemberships,
+      and(
+        eq(organizationMemberships.userId, sessions.userId),
+        eq(organizationMemberships.organizationId, sessions.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(sessions.tokenHash, tokenHash),
+        gt(sessions.expiresAt, now),
+        isNull(users.disabledAt),
+        isNull(organizationMemberships.disabledAt),
+      ),
+    )
     .limit(1);
   if (!result) return null;
 
   const csrfToken = getCookie(context, CSRF_COOKIE) ?? "";
-  if (!csrfToken || await sha256(`${csrfToken}.${context.env.SESSION_PEPPER}`) !== result.csrfTokenHash) return null;
+  if (!csrfToken || (await sha256(`${csrfToken}.${context.env.SESSION_PEPPER}`)) !== result.csrfTokenHash) return null;
 
   if (now.getTime() - result.lastSeenAt.getTime() >= 60 * 60 * 1000) {
     const touchSession = db.update(sessions).set({ lastSeenAt: now }).where(eq(sessions.id, result.sessionId));

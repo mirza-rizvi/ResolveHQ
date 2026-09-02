@@ -32,44 +32,94 @@ interface ConversationPanelProps {
 }
 
 export function ConversationPanel({
-  ticketId, conversation, loading, error, onRetry, members, teams, availableTags, savedReplies, onBack, onUpdate,
-  onAddTag, onRemoveTag, onOpenCustomer, composerFormRef, messageKind, onMessageKindChange, draft, onDraftChange,
-  onSend, sending, draftStatus, draftSavedAt,
+  ticketId,
+  conversation,
+  loading,
+  error,
+  onRetry,
+  members,
+  teams,
+  availableTags,
+  savedReplies,
+  onBack,
+  onUpdate,
+  onAddTag,
+  onRemoveTag,
+  onOpenCustomer,
+  composerFormRef,
+  messageKind,
+  onMessageKindChange,
+  draft,
+  onDraftChange,
+  onSend,
+  sending,
+  draftStatus,
+  draftSavedAt,
 }: ConversationPanelProps) {
-  return <section className="conversation-panel" aria-label="Selected conversation">
-    {error
-      ? <div className="conversation-empty">
-        <MessageSquareText size={22} />
-        <h2>Could not open this conversation</h2>
-        <p>{error}</p>
-        <Button variant="secondary" size="small" onClick={onRetry}>Retry</Button>
-      </div>
-      : !conversation
-        ? ticketId && loading
-          ? <div className="conversation-loading" aria-label="Opening conversation"><span /><span /><span /></div>
-          : <div className="conversation-empty">
+  return (
+    <section className="conversation-panel" aria-label="Selected conversation">
+      {error ? (
+        <div className="conversation-empty">
+          <MessageSquareText size={22} />
+          <h2>Could not open this conversation</h2>
+          <p>{error}</p>
+          <Button variant="secondary" size="small" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      ) : !conversation ? (
+        ticketId && loading ? (
+          <div className="conversation-loading" aria-label="Opening conversation">
+            <span />
+            <span />
+            <span />
+          </div>
+        ) : (
+          <div className="conversation-empty">
             <MessageSquareText size={22} />
             <h2>Select a ticket</h2>
             <p>Open a row from the rundown to read and reply.</p>
           </div>
-        : <>
+        )
+      ) : (
+        <>
           <header className="conversation-header">
-            <button className="mobile-back" onClick={onBack} aria-label="Back to ticket list"><ArrowLeft size={18} /></button>
+            <button className="mobile-back" onClick={onBack} aria-label="Back to ticket list">
+              <ArrowLeft size={18} />
+            </button>
             <div>
               <p className="ticket-reference">#{conversation.ticket.number}</p>
               <h1>{conversation.ticket.subject}</h1>
             </div>
             <div className="conversation-actions">
-              <Button variant="secondary" size="small" disabled={conversation.ticket.status === "resolved"} onClick={() => onUpdate({ status: "resolved" })}>
-                <Check size={14} />{conversation.ticket.status === "resolved" ? "Resolved" : "Resolve"}
+              <Button
+                variant="secondary"
+                size="small"
+                disabled={conversation.ticket.status === "resolved"}
+                onClick={() => onUpdate({ status: "resolved" })}
+              >
+                <Check size={14} />
+                {conversation.ticket.status === "resolved" ? "Resolved" : "Resolve"}
               </Button>
-              <Button variant="ghost" size="icon" aria-label="Customer details" title="Customer details" onClick={onOpenCustomer}><PanelRightOpen size={17} /></Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Customer details"
+                title="Customer details"
+                onClick={onOpenCustomer}
+              >
+                <PanelRightOpen size={17} />
+              </Button>
             </div>
           </header>
           <div className="conversation-context">
             <label>
               <span>Status</span>
-              <select aria-label="Ticket status" value={conversation.ticket.status} onChange={(event) => onUpdate({ status: event.target.value })}>
+              <select
+                aria-label="Ticket status"
+                value={conversation.ticket.status}
+                onChange={(event) => onUpdate({ status: event.target.value })}
+              >
                 <option value="open">Open</option>
                 <option value="pending">Pending</option>
                 <option value="waiting_customer">Waiting</option>
@@ -79,7 +129,11 @@ export function ConversationPanel({
             </label>
             <label>
               <span>Priority</span>
-              <select aria-label="Ticket priority" value={conversation.ticket.priority} onChange={(event) => onUpdate({ priority: event.target.value })}>
+              <select
+                aria-label="Ticket priority"
+                value={conversation.ticket.priority}
+                onChange={(event) => onUpdate({ priority: event.target.value })}
+              >
                 <option value="low">Low</option>
                 <option value="normal">Normal</option>
                 <option value="high">High</option>
@@ -88,39 +142,74 @@ export function ConversationPanel({
             </label>
             <label>
               <span>Assignee</span>
-              <select aria-label="Ticket assignee" value={conversation.ticket.assignedUserId ?? ""} onChange={(event) => onUpdate({ assignedUserId: event.target.value || null })}>
+              <select
+                aria-label="Ticket assignee"
+                value={conversation.ticket.assignedUserId ?? ""}
+                onChange={(event) => onUpdate({ assignedUserId: event.target.value || null })}
+              >
                 <option value="">Unassigned</option>
-                {members.filter((member) => !member.disabledAt).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                {members
+                  .filter((member) => !member.disabledAt)
+                  .map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.name}
+                    </option>
+                  ))}
               </select>
             </label>
             <label className="team-control">
               <span>Team</span>
-              <select aria-label="Ticket team" value={conversation.ticket.assignedTeamId ?? ""} onChange={(event) => onUpdate({ assignedTeamId: event.target.value || null })}>
+              <select
+                aria-label="Ticket team"
+                value={conversation.ticket.assignedTeamId ?? ""}
+                onChange={(event) => onUpdate({ assignedTeamId: event.target.value || null })}
+              >
                 <option value="">No team</option>
-                {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                  </option>
+                ))}
               </select>
             </label>
             <div className="context-tags">
               <span>Tags</span>
               <div>
-                {conversation.tags.map((tag) => <button key={tag.id} type="button" className={`tag-chip tag-${tag.color}`} onClick={() => onRemoveTag(tag.id)} title={`Remove ${tag.name}`}>
-                  {tag.name}<X size={10} />
-                </button>)}
+                {conversation.tags.map((tag) => (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    className={`tag-chip tag-${tag.color}`}
+                    onClick={() => onRemoveTag(tag.id)}
+                    title={`Remove ${tag.name}`}
+                  >
+                    {tag.name}
+                    <X size={10} />
+                  </button>
+                ))}
                 <select aria-label="Add tag" value="" onChange={(event) => onAddTag(event.target.value)}>
                   <option value="">Add tag</option>
-                  {availableTags.filter((tag) => !conversation.tags.some((current) => current.id === tag.id)).map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                  {availableTags
+                    .filter((tag) => !conversation.tags.some((current) => current.id === tag.id))
+                    .map((tag) => (
+                      <option key={tag.id} value={tag.id}>
+                        {tag.name}
+                      </option>
+                    ))}
                 </select>
               </div>
             </div>
           </div>
           <div className="thread">
-            {conversation.messages.map((message) => <ThreadMessage
-              key={message.id}
-              message={message}
-              customerName={conversation.ticket.customerName}
-              customerEmail={conversation.ticket.customerEmail}
-              attachments={conversation.attachments.filter((file) => file.messageId === message.id)}
-            />)}
+            {conversation.messages.map((message) => (
+              <ThreadMessage
+                key={message.id}
+                message={message}
+                customerName={conversation.ticket.customerName}
+                customerEmail={conversation.ticket.customerEmail}
+                attachments={conversation.attachments.filter((file) => file.messageId === message.id)}
+              />
+            ))}
           </div>
           <Composer
             formRef={composerFormRef}
@@ -136,6 +225,8 @@ export function ConversationPanel({
             draftSavedAt={draftSavedAt}
             customerName={conversation.ticket.customerName}
           />
-        </>}
-  </section>;
+        </>
+      )}
+    </section>
+  );
 }

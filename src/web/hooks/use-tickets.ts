@@ -29,7 +29,8 @@ export function useTickets(filters: TicketFilters) {
   // page on screen instead of flashing the skeleton on every filter change.
   const query = useQuery({
     queryKey: ["tickets", filters],
-    queryFn: () => api<{ tickets: TicketSummary[] }>(`/tickets?${ticketSearchParams(filters)}`).then((result) => result.tickets),
+    queryFn: () =>
+      api<{ tickets: TicketSummary[] }>(`/tickets?${ticketSearchParams(filters)}`).then((result) => result.tickets),
     placeholderData: keepPreviousData,
     refetchInterval: pollInterval,
   });

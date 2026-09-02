@@ -15,17 +15,20 @@ import { webhookRoutes } from "./webhooks/routes";
 
 const app = new Hono<HonoEnv>();
 
-app.use("*", secureHeaders({
-  contentSecurityPolicy: {
-    defaultSrc: ["'self'"],
-    imgSrc: ["'self'", "data:", "blob:"],
-    styleSrc: ["'self'", "'unsafe-inline'"],
-    scriptSrc: ["'self'"],
-    connectSrc: ["'self'"],
-    frameAncestors: ["'none'"],
-  },
-  referrerPolicy: "strict-origin-when-cross-origin",
-}));
+app.use(
+  "*",
+  secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'"],
+      frameAncestors: ["'none'"],
+    },
+    referrerPolicy: "strict-origin-when-cross-origin",
+  }),
+);
 
 app.use("/api/*", async (context, next) => {
   const requestId = context.req.header("cf-ray") ?? crypto.randomUUID();
@@ -40,7 +43,10 @@ app.use("/api/*", async (context, next) => {
 app.get("/api/health", (context) => context.json({ ok: true, service: "resolvehq" }));
 app.get("/api/ready", async (context) => {
   const database = await context.env.DB.prepare("SELECT 1 AS ready").first<{ ready: number }>();
-  return context.json({ ok: database?.ready === 1, database: database?.ready === 1 ? "ready" : "unavailable" }, database?.ready === 1 ? 200 : 503);
+  return context.json(
+    { ok: database?.ready === 1, database: database?.ready === 1 ? "ready" : "unavailable" },
+    database?.ready === 1 ? 200 : 503,
+  );
 });
 app.route("/api/auth", authRoutes);
 app.route("/api/organization", organizationRoutes);
@@ -68,20 +74,44 @@ app.route("/api/v1", v1);
 
 app.notFound((context) => {
   if (context.req.path.startsWith("/api/")) {
-    return context.json({ error: { code: "not_found", message: "The requested resource was not found.", requestId: context.get("requestId") } }, 404);
+    return context.json(
+      {
+        error: {
+          code: "not_found",
+          message: "The requested resource was not found.",
+          requestId: context.get("requestId"),
+        },
+      },
+      404,
+    );
   }
   return context.env.ASSETS.fetch(context.req.raw);
 });
 
 app.onError((error, context) => {
   if (error instanceof HttpError) {
-    return context.json({ error: { code: error.code, message: error.message, requestId: context.get("requestId") } }, error.status);
+    return context.json(
+      { error: { code: error.code, message: error.message, requestId: context.get("requestId") } },
+      error.status,
+    );
   }
   if (error instanceof SyntaxError) {
-    return context.json({ error: { code: "invalid_json", message: "Request body must be valid JSON.", requestId: context.get("requestId") } }, 400);
+    return context.json(
+      {
+        error: {
+          code: "invalid_json",
+          message: "Request body must be valid JSON.",
+          requestId: context.get("requestId"),
+        },
+      },
+      400,
+    );
   }
   console.error("Unhandled request error", error);
-  return context.json({ error: { code: "internal_error", message: "Something went wrong.", requestId: context.get("requestId") } }, 500);
+  return context.json(
+    { error: { code: "internal_error", message: "Something went wrong.", requestId: context.get("requestId") } },
+    500,
+  );
 });
 
 export default app;

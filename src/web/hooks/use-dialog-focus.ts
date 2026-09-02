@@ -19,16 +19,33 @@ export function useDialogFocus<T extends HTMLElement = HTMLElement>(active: bool
     const focusables = () => Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? []);
     const frame = window.requestAnimationFrame(() => focusables()[0]?.focus());
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
       if (event.key !== "Tab") return;
       const items = focusables();
-      if (!items.length) { event.preventDefault(); return; }
-      const first = items[0]; const last = items.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      if (!items.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => { window.cancelAnimationFrame(frame); document.removeEventListener("keydown", onKeyDown); previousFocus?.focus(); };
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
   }, [active, onClose]);
 
   return dialogRef;

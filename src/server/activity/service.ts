@@ -6,7 +6,13 @@ import type { TenantContext } from "resolve-server/types";
 export async function recordActivity(
   db: AppDatabase,
   tenant: TenantContext,
-  event: { ticketId?: string; eventType: string; entityType: string; entityId: string; metadata?: Record<string, unknown> },
+  event: {
+    ticketId?: string;
+    eventType: string;
+    entityType: string;
+    entityId: string;
+    metadata?: Record<string, unknown>;
+  },
 ) {
   await db.insert(activityLogs).values({
     id: newId("act"),

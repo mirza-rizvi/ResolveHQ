@@ -11,12 +11,32 @@ export function useWorkspaceData() {
   const toast = useToast();
   const [members, customers, tags, savedReplies, teams, savedViews] = useQueries({
     queries: [
-      { queryKey: ["members"], staleTime, queryFn: () => api<{ members: Member[] }>("/organization/members").then((result) => result.members) },
-      { queryKey: ["customers"], staleTime, queryFn: () => api<{ customers: CustomerOption[] }>("/customers").then((result) => result.customers) },
+      {
+        queryKey: ["members"],
+        staleTime,
+        queryFn: () => api<{ members: Member[] }>("/organization/members").then((result) => result.members),
+      },
+      {
+        queryKey: ["customers"],
+        staleTime,
+        queryFn: () => api<{ customers: CustomerOption[] }>("/customers").then((result) => result.customers),
+      },
       { queryKey: ["tags"], staleTime, queryFn: () => api<{ tags: Tag[] }>("/tags").then((result) => result.tags) },
-      { queryKey: ["saved-replies"], staleTime, queryFn: () => api<{ savedReplies: SavedReply[] }>("/saved-replies").then((result) => result.savedReplies) },
-      { queryKey: ["teams"], staleTime, queryFn: () => api<{ teams: Team[] }>("/operations/teams").then((result) => result.teams) },
-      { queryKey: ["saved-views"], staleTime, queryFn: () => api<{ views: SavedView[] }>("/operations/views").then((result) => result.views) },
+      {
+        queryKey: ["saved-replies"],
+        staleTime,
+        queryFn: () => api<{ savedReplies: SavedReply[] }>("/saved-replies").then((result) => result.savedReplies),
+      },
+      {
+        queryKey: ["teams"],
+        staleTime,
+        queryFn: () => api<{ teams: Team[] }>("/operations/teams").then((result) => result.teams),
+      },
+      {
+        queryKey: ["saved-views"],
+        staleTime,
+        queryFn: () => api<{ views: SavedView[] }>("/operations/views").then((result) => result.views),
+      },
     ],
   });
 
@@ -24,18 +44,24 @@ export function useWorkspaceData() {
   const onError = (error: Error) => toast.push(error.message, "error");
 
   const createView = useMutation({
-    mutationFn: (input: { name: string; filters: SavedViewFilters }) => api<{ view: SavedView }>("/operations/views", {
-      method: "POST",
-      body: JSON.stringify({ ...input, visibility: "personal" }),
-    }),
+    mutationFn: (input: { name: string; filters: SavedViewFilters }) =>
+      api<{ view: SavedView }>("/operations/views", {
+        method: "POST",
+        body: JSON.stringify({ ...input, visibility: "personal" }),
+      }),
     onError,
-    onSuccess: () => { toast.push("View saved.", "success"); void refreshViews(); },
+    onSuccess: () => {
+      toast.push("View saved.", "success");
+      void refreshViews();
+    },
   });
 
   const deleteView = useMutation({
     mutationFn: (viewId: string) => api(`/operations/views/${viewId}`, { method: "DELETE" }),
     onError,
-    onSuccess: () => { void refreshViews(); },
+    onSuccess: () => {
+      void refreshViews();
+    },
   });
 
   return {

@@ -34,9 +34,15 @@ interface StatusState extends StatusTimestamps {
  */
 export function statusTimestamps(current: StatusState, next: TicketStatus | undefined, now: Date): StatusTimestamps {
   if (!next) return { resolvedAt: current.resolvedAt, closedAt: current.closedAt, waitingSince: current.waitingSince };
-  if (next === "resolved") return { resolvedAt: current.status === "resolved" && current.resolvedAt ? current.resolvedAt : now, closedAt: null, waitingSince: null };
+  if (next === "resolved")
+    return {
+      resolvedAt: current.status === "resolved" && current.resolvedAt ? current.resolvedAt : now,
+      closedAt: null,
+      waitingSince: null,
+    };
   if (next === "closed") return { resolvedAt: current.resolvedAt, closedAt: now, waitingSince: null };
-  if (next === "waiting_customer") return { resolvedAt: null, closedAt: null, waitingSince: current.waitingSince ?? now };
+  if (next === "waiting_customer")
+    return { resolvedAt: null, closedAt: null, waitingSince: current.waitingSince ?? now };
   return { resolvedAt: null, closedAt: null, waitingSince: null };
 }
 
@@ -54,49 +60,119 @@ export async function applyTicketUpdate(
 ): Promise<Ticket> {
   // Callers may pass explicit undefined for untouched fields; drop them so the
   // update and the returned row never overwrite existing values with undefined.
-  const changes = Object.fromEntries(Object.entries(requested).filter(([, value]) => value !== undefined)) as TicketChanges;
+  const changes = Object.fromEntries(
+    Object.entries(requested).filter(([, value]) => value !== undefined),
+  ) as TicketChanges;
   if (changes.assignedUserId) await assertActiveMember(env.DB, tenant.organizationId, changes.assignedUserId);
   if (changes.assignedTeamId) await assertTeam(env.DB, tenant.organizationId, changes.assignedTeamId);
   const db = createDb(env.DB);
-  const [current] = await db.select().from(tickets).where(and(eq(tickets.id, ticketId), eq(tickets.organizationId, tenant.organizationId))).limit(1);
+  const [current] = await db
+    .select()
+    .from(tickets)
+    .where(and(eq(tickets.id, ticketId), eq(tickets.organizationId, tenant.organizationId)))
+    .limit(1);
   if (!current) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
   if (options.expectedVersion !== undefined && options.expectedVersion !== current.version) {
-    throw new HttpError(409, "ticket_version_conflict", "This ticket changed in another session. Refresh and try again.");
+    throw new HttpError(
+      409,
+      "ticket_version_conflict",
+      "This ticket changed in another session. Refresh and try again.",
+    );
   }
   const now = new Date();
   const stamps = statusTimestamps(current, changes.status, now);
-  const result = await db.update(tickets).set({ ...changes, ...stamps, updatedAt: now, version: current.version + 1 })
-    .where(and(eq(tickets.id, current.id), eq(tickets.organizationId, tenant.organizationId), eq(tickets.version, current.version)));
-  if (!result.meta.changes) throw new HttpError(409, "ticket_version_conflict", "This ticket changed in another session. Refresh and try again.");
+  const result = await db
+    .update(tickets)
+    .set({ ...changes, ...stamps, updatedAt: now, version: current.version + 1 })
+    .where(
+      and(
+        eq(tickets.id, current.id),
+        eq(tickets.organizationId, tenant.organizationId),
+        eq(tickets.version, current.version),
+      ),
+    );
+  if (!result.meta.changes)
+    throw new HttpError(
+      409,
+      "ticket_version_conflict",
+      "This ticket changed in another session. Refresh and try again.",
+    );
 
   if (changes.assignedUserId !== undefined && changes.assignedUserId !== current.assignedUserId) {
-    await db.insert(ticketAssignments).values({ id: newId("asn"), organizationId: tenant.organizationId, ticketId: current.id, assignedToUserId: changes.assignedUserId, assignedByUserId: tenant.userId });
+    await db
+      .insert(ticketAssignments)
+      .values({
+        id: newId("asn"),
+        organizationId: tenant.organizationId,
+        ticketId: current.id,
+        assignedToUserId: changes.assignedUserId,
+        assignedByUserId: tenant.userId,
+      });
     if (changes.assignedUserId && changes.assignedUserId !== tenant.userId) {
-      await db.insert(notifications).values({ id: newId("ntf"), organizationId: tenant.organizationId, userId: changes.assignedUserId, ticketId: current.id, type: "ticket.assigned", title: `Ticket #${current.number} was assigned to you` });
+      await db
+        .insert(notifications)
+        .values({
+          id: newId("ntf"),
+          organizationId: tenant.organizationId,
+          userId: changes.assignedUserId,
+          ticketId: current.id,
+          type: "ticket.assigned",
+          title: `Ticket #${current.number} was assigned to you`,
+        });
     }
-    await recordActivity(db, tenant, { ticketId: current.id, eventType: "ticket.assigned", entityType: "ticket", entityId: current.id, metadata: { from: current.assignedUserId, to: changes.assignedUserId } });
+    await recordActivity(db, tenant, {
+      ticketId: current.id,
+      eventType: "ticket.assigned",
+      entityType: "ticket",
+      entityId: current.id,
+      metadata: { from: current.assignedUserId, to: changes.assignedUserId },
+    });
   }
   if (changes.status && changes.status !== current.status) {
-    await recordActivity(db, tenant, { ticketId: current.id, eventType: "ticket.status_changed", entityType: "ticket", entityId: current.id, metadata: { from: current.status, to: changes.status } });
+    await recordActivity(db, tenant, {
+      ticketId: current.id,
+      eventType: "ticket.status_changed",
+      entityType: "ticket",
+      entityId: current.id,
+      metadata: { from: current.status, to: changes.status },
+    });
   }
   if (changes.priority && changes.priority !== current.priority) {
-    await recordActivity(db, tenant, { ticketId: current.id, eventType: "ticket.priority_changed", entityType: "ticket", entityId: current.id, metadata: { from: current.priority, to: changes.priority } });
+    await recordActivity(db, tenant, {
+      ticketId: current.id,
+      eventType: "ticket.priority_changed",
+      entityType: "ticket",
+      entityId: current.id,
+      metadata: { from: current.priority, to: changes.priority },
+    });
   }
   return { ...current, ...changes, ...stamps, updatedAt: now, version: current.version + 1 };
 }
 
 export async function assertActiveMember(database: D1Database, organizationId: string, userId: string) {
-  const [member] = await createDb(database).select({ userId: organizationMemberships.userId }).from(organizationMemberships).where(and(
-    eq(organizationMemberships.organizationId, organizationId),
-    eq(organizationMemberships.userId, userId),
-    isNull(organizationMemberships.disabledAt),
-  )).limit(1);
+  const [member] = await createDb(database)
+    .select({ userId: organizationMemberships.userId })
+    .from(organizationMemberships)
+    .where(
+      and(
+        eq(organizationMemberships.organizationId, organizationId),
+        eq(organizationMemberships.userId, userId),
+        isNull(organizationMemberships.disabledAt),
+      ),
+    )
+    .limit(1);
   if (!member) throw new HttpError(404, "member_not_found", "Team member not found.");
 }
 
 export async function assertTeam(database: D1Database, organizationId: string, teamId: string) {
-  const [team] = await createDb(database).select({ id: teams.id }).from(teams).where(and(eq(teams.organizationId, organizationId), eq(teams.id, teamId))).limit(1);
+  const [team] = await createDb(database)
+    .select({ id: teams.id })
+    .from(teams)
+    .where(and(eq(teams.organizationId, organizationId), eq(teams.id, teamId)))
+    .limit(1);
   if (!team) throw new HttpError(404, "team_not_found", "Team not found.");
 }
 
-export function preview(value: string) { return value.replace(/\s+/g, " ").trim().slice(0, 280); }
+export function preview(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 280);
+}

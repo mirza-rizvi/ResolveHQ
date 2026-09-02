@@ -15,7 +15,9 @@ test("owner can open the seeded support inbox across desktop and mobile", async 
   await expect(page.getByRole("dialog", { name: "Command menu" })).toBeVisible();
   await page.keyboard.press("Escape");
 
-  const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  const desktopOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
   expect(desktopOverflow).toBe(false);
   await page.screenshot({ path: testInfo.outputPath("desktop.png"), fullPage: true });
 
@@ -26,7 +28,9 @@ test("owner can open the seeded support inbox across desktop and mobile", async 
   await expect(page.getByRole("button", { name: "Back to ticket list" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Resolve", exact: true })).toBeVisible();
   await page.waitForTimeout(250);
-  const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  const mobileOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
   expect(mobileOverflow).toBe(false);
   await page.screenshot({ path: testInfo.outputPath("mobile.png"), fullPage: true });
 });

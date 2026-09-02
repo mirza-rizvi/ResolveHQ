@@ -9,7 +9,9 @@ import { attachmentAccept, maxAttachmentSize, resolveContentType } from "./attac
 import { formatBytes, formatClock } from "./format";
 import type { MessageKind, SavedReply } from "./types";
 
-const RichComposer = lazy(() => import("@/web/components/rich-composer").then((module) => ({ default: module.RichComposer })));
+const RichComposer = lazy(() =>
+  import("@/web/components/rich-composer").then((module) => ({ default: module.RichComposer })),
+);
 
 interface PendingAttachment {
   uid: string;
@@ -34,8 +36,18 @@ interface ComposerProps {
 }
 
 export function Composer({
-  formRef, ticketId, kind, onKindChange, savedReplies, body, onBodyChange, onSend, sending,
-  draftStatus, draftSavedAt, customerName,
+  formRef,
+  ticketId,
+  kind,
+  onKindChange,
+  savedReplies,
+  body,
+  onBodyChange,
+  onSend,
+  sending,
+  draftStatus,
+  draftSavedAt,
+  customerName,
 }: ComposerProps) {
   const toast = useToast();
   const editorRef = useRef<RichComposerHandle>(null);
@@ -44,9 +56,15 @@ export function Composer({
   const uploading = attachments.some((file) => !file.id);
 
   async function upload(file: File) {
-    if (file.size > maxAttachmentSize) { toast.push("Files must be smaller than 15 MB.", "error"); return; }
+    if (file.size > maxAttachmentSize) {
+      toast.push("Files must be smaller than 15 MB.", "error");
+      return;
+    }
     const contentType = resolveContentType(file);
-    if (!contentType) { toast.push("This file type is not supported.", "error"); return; }
+    if (!contentType) {
+      toast.push("This file type is not supported.", "error");
+      return;
+    }
     const uid = crypto.randomUUID();
     setAttachments((current) => [...current, { uid, id: null, name: file.name, size: file.size }]);
     try {
@@ -56,8 +74,14 @@ export function Composer({
         method: "POST",
         body: JSON.stringify({ ticketId, filename: file.name, contentType, size: file.size }),
       });
-      await api(intent.upload.url.replace(/^\/api/, ""), { method: "PUT", headers: { "content-type": contentType }, body: file });
-      setAttachments((current) => current.map((entry) => entry.uid === uid ? { ...entry, id: intent.upload.attachmentId } : entry));
+      await api(intent.upload.url.replace(/^\/api/, ""), {
+        method: "PUT",
+        headers: { "content-type": contentType },
+        body: file,
+      });
+      setAttachments((current) =>
+        current.map((entry) => (entry.uid === uid ? { ...entry, id: intent.upload.attachmentId } : entry)),
+      );
     } catch (reason) {
       setAttachments((current) => current.filter((entry) => entry.uid !== uid));
       toast.push(errorMessage(reason, "The file could not be uploaded."), "error");
@@ -71,7 +95,9 @@ export function Composer({
     try {
       await onSend({ attachmentIds });
       setAttachments([]);
-    } catch { /* the mutation reports the failure and the draft is kept */ }
+    } catch {
+      /* the mutation reports the failure and the draft is kept */
+    }
   }
 
   function insertSavedReply(id: string) {
@@ -81,61 +107,96 @@ export function Composer({
     else onBodyChange(body ? `${body}\n\n${reply.content}` : reply.content, "");
   }
 
-  return <form ref={formRef} className={kind === "internal_note" ? "composer note-mode" : "composer"} onSubmit={(event) => void submit(event)}>
-    <div className="composer-tabs">
-      <label>
-        <input type="radio" name="kind" value="message" checked={kind === "message"} onChange={() => onKindChange("message")} />
-        <Send size={14} />Reply <kbd>R</kbd>
-      </label>
-      <label>
-        <input type="radio" name="kind" value="internal_note" checked={kind === "internal_note"} onChange={() => onKindChange("internal_note")} />
-        <StickyNote size={14} />Internal note <kbd>P</kbd>
-      </label>
-      <select aria-label="Insert saved reply" value="" onChange={(event) => insertSavedReply(event.target.value)}>
-        <option value="">Saved replies</option>
-        {savedReplies.map((reply) => <option key={reply.id} value={reply.id}>{reply.name}</option>)}
-      </select>
-    </div>
-    <Suspense fallback={<div className="rich-composer-loading" aria-label="Loading editor" />}>
-      <RichComposer
-        ref={editorRef}
-        value={body}
-        onChange={onBodyChange}
-        onSubmit={() => formRef.current?.requestSubmit()}
-        placeholder={kind === "internal_note" ? "Add context for your team…" : `Reply to ${customerName}…`}
-      />
-    </Suspense>
-    <p className="draft-status" aria-live="polite">{draftLabel(draftStatus, draftSavedAt)}</p>
-    {attachments.length > 0 && <div className="attachment-chips">
-      {attachments.map((file) => <span key={file.uid} className={file.id ? "attachment-chip" : "attachment-chip uploading"}>
-        {file.id ? <Paperclip size={12} /> : <Loader2 size={12} className="spin" />}
-        <span>{file.name}</span>
-        <small>{file.id ? formatBytes(file.size) : "Uploading…"}</small>
-        <button type="button" aria-label={`Remove ${file.name}`} onClick={() => setAttachments((current) => current.filter((entry) => entry.uid !== file.uid))}>
-          <X size={11} />
-        </button>
-      </span>)}
-    </div>}
-    <footer>
-      <label className="attach-button">
-        <Paperclip size={16} />Attach
-        <input
-          ref={fileInput}
-          type="file"
-          accept={attachmentAccept}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) void upload(file);
-            if (fileInput.current) fileInput.current.value = "";
-          }}
+  return (
+    <form
+      ref={formRef}
+      className={kind === "internal_note" ? "composer note-mode" : "composer"}
+      onSubmit={(event) => void submit(event)}
+    >
+      <div className="composer-tabs">
+        <label>
+          <input
+            type="radio"
+            name="kind"
+            value="message"
+            checked={kind === "message"}
+            onChange={() => onKindChange("message")}
+          />
+          <Send size={14} />
+          Reply <kbd>R</kbd>
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="kind"
+            value="internal_note"
+            checked={kind === "internal_note"}
+            onChange={() => onKindChange("internal_note")}
+          />
+          <StickyNote size={14} />
+          Internal note <kbd>P</kbd>
+        </label>
+        <select aria-label="Insert saved reply" value="" onChange={(event) => insertSavedReply(event.target.value)}>
+          <option value="">Saved replies</option>
+          {savedReplies.map((reply) => (
+            <option key={reply.id} value={reply.id}>
+              {reply.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <Suspense fallback={<div className="rich-composer-loading" aria-label="Loading editor" />}>
+        <RichComposer
+          ref={editorRef}
+          value={body}
+          onChange={onBodyChange}
+          onSubmit={() => formRef.current?.requestSubmit()}
+          placeholder={kind === "internal_note" ? "Add context for your team…" : `Reply to ${customerName}…`}
         />
-      </label>
-      <span>⌘ Enter</span>
-      <Button type="submit" size="small" disabled={uploading || sending || !body.trim()}>
-        {kind === "internal_note" ? "Add note" : "Send reply"}
-      </Button>
-    </footer>
-  </form>;
+      </Suspense>
+      <p className="draft-status" aria-live="polite">
+        {draftLabel(draftStatus, draftSavedAt)}
+      </p>
+      {attachments.length > 0 && (
+        <div className="attachment-chips">
+          {attachments.map((file) => (
+            <span key={file.uid} className={file.id ? "attachment-chip" : "attachment-chip uploading"}>
+              {file.id ? <Paperclip size={12} /> : <Loader2 size={12} className="spin" />}
+              <span>{file.name}</span>
+              <small>{file.id ? formatBytes(file.size) : "Uploading…"}</small>
+              <button
+                type="button"
+                aria-label={`Remove ${file.name}`}
+                onClick={() => setAttachments((current) => current.filter((entry) => entry.uid !== file.uid))}
+              >
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <footer>
+        <label className="attach-button">
+          <Paperclip size={16} />
+          Attach
+          <input
+            ref={fileInput}
+            type="file"
+            accept={attachmentAccept}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void upload(file);
+              if (fileInput.current) fileInput.current.value = "";
+            }}
+          />
+        </label>
+        <span>⌘ Enter</span>
+        <Button type="submit" size="small" disabled={uploading || sending || !body.trim()}>
+          {kind === "internal_note" ? "Add note" : "Send reply"}
+        </Button>
+      </footer>
+    </form>
+  );
 }
 
 function draftLabel(status: DraftStatus, savedAt: Date | null) {
