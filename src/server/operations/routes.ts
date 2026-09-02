@@ -8,7 +8,7 @@ import { notifications, savedViews, teamMembers, teams, ticketDrafts, ticketRead
 import { HttpError } from "../http/errors";
 import { validate } from "../http/validate";
 import { newId } from "../lib/id";
-import { applyTicketUpdate, type TicketChanges } from "../tickets/service";
+import { applyTicketUpdate, assertActiveMember, assertTeam, type TicketChanges } from "../tickets/service";
 import type { HonoEnv } from "../types";
 import { ticketPriorities, ticketStatuses } from "../../shared/domain";
 
@@ -135,28 +135,34 @@ operationRoutes.post("/teams", requireRole("admin"), validate("json", z.object({
   return context.json({ team: { id, ...input } }, 201);
 });
 
-operationRoutes.post("/tickets/bulk", validate("json", z.object({ ticketIds: z.array(z.string()).min(1).max(20), status: z.enum(ticketStatuses).optional(), priority: z.enum(ticketPriorities).optional(), assignedUserId: z.string().nullable().optional() })), async (context) => {
+const skippableBulkReasons = new Set(["ticket_not_found", "ticket_version_conflict"]);
+
+operationRoutes.post("/tickets/bulk", validate("json", z.object({ ticketIds: z.array(z.string()).min(1).max(20), status: z.enum(ticketStatuses).optional(), priority: z.enum(ticketPriorities).optional(), assignedUserId: z.string().nullable().optional(), assignedTeamId: z.string().nullable().optional() })), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
-  if (input.status === undefined && input.priority === undefined && input.assignedUserId === undefined) throw new HttpError(400, "empty_bulk_action", "Choose at least one change.");
+  if (input.status === undefined && input.priority === undefined && input.assignedUserId === undefined && input.assignedTeamId === undefined) throw new HttpError(400, "empty_bulk_action", "Choose at least one change.");
   const db = createDb(context.env.DB);
-  const changes: TicketChanges = { status: input.status, priority: input.priority, assignedUserId: input.assignedUserId };
+  const changes: TicketChanges = { status: input.status, priority: input.priority, assignedUserId: input.assignedUserId, assignedTeamId: input.assignedTeamId };
+  // Validate the destination once, before anything is written, so a bad
+  // assignee cannot leave the first few tickets mutated behind a failed request.
+  if (changes.assignedUserId) await assertActiveMember(context.env.DB, tenant.organizationId, changes.assignedUserId);
+  if (changes.assignedTeamId) await assertTeam(context.env.DB, tenant.organizationId, changes.assignedTeamId);
   const skipped: Array<{ ticketId: string; reason: string }> = [];
   let updated = 0;
   for (const ticketId of input.ticketIds) {
     try {
       await applyTicketUpdate(context.env, tenant, ticketId, changes);
     } catch (error) {
-      // A ticket that is gone (or belongs to another workspace) is reported and
-      // skipped; every other failure, such as an assignee outside this
-      // workspace, fails the whole request instead of silently doing less.
-      if (error instanceof HttpError && error.status === 404 && error.code === "ticket_not_found") {
+      // A ticket that is gone, or that someone else changed underneath us, is
+      // reported and skipped so the rest of the selection still goes through.
+      // Anything else fails the request rather than leaving a partial write.
+      if (error instanceof HttpError && skippableBulkReasons.has(error.code)) {
         skipped.push({ ticketId, reason: error.code });
         continue;
       }
       throw error;
     }
-    await recordActivity(db, tenant, { ticketId, eventType: "ticket.bulk_updated", entityType: "ticket", entityId: ticketId, metadata: { status: input.status, priority: input.priority, assignedUserId: input.assignedUserId } });
+    await recordActivity(db, tenant, { ticketId, eventType: "ticket.bulk_updated", entityType: "ticket", entityId: ticketId, metadata: { status: input.status, priority: input.priority, assignedUserId: input.assignedUserId, assignedTeamId: input.assignedTeamId } });
     updated += 1;
   }
   return context.json({ updated, skipped });

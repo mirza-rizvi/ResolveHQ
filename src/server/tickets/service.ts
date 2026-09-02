@@ -22,14 +22,19 @@ interface StatusTimestamps {
   waitingSince: Date | null;
 }
 
+interface StatusState extends StatusTimestamps {
+  status: TicketStatus;
+}
+
 /**
- * Derives the ticket lifecycle timestamps for a status transition. Closing a
- * ticket keeps the resolution time it already carried, and only a customer wait
- * keeps (or starts) the waiting clock.
+ * Derives the ticket lifecycle timestamps for a status transition. Re-resolving
+ * an already resolved ticket keeps the original resolution time, closing keeps
+ * the resolution time the ticket carried, and only a customer wait keeps (or
+ * starts) the waiting clock.
  */
-export function statusTimestamps(current: StatusTimestamps, next: TicketStatus | undefined, now: Date): StatusTimestamps {
+export function statusTimestamps(current: StatusState, next: TicketStatus | undefined, now: Date): StatusTimestamps {
   if (!next) return { resolvedAt: current.resolvedAt, closedAt: current.closedAt, waitingSince: current.waitingSince };
-  if (next === "resolved") return { resolvedAt: now, closedAt: null, waitingSince: null };
+  if (next === "resolved") return { resolvedAt: current.status === "resolved" && current.resolvedAt ? current.resolvedAt : now, closedAt: null, waitingSince: null };
   if (next === "closed") return { resolvedAt: current.resolvedAt, closedAt: now, waitingSince: null };
   if (next === "waiting_customer") return { resolvedAt: null, closedAt: null, waitingSince: current.waitingSince ?? now };
   return { resolvedAt: null, closedAt: null, waitingSince: null };

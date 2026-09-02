@@ -115,4 +115,16 @@ describe("operational workflows", () => {
     const row = await env.DB.prepare("SELECT resolved_at AS resolvedAt, version FROM tickets WHERE id = ?").bind(ticket.id).first<{ resolvedAt: number | null; version: number }>();
     expect(row?.resolvedAt).not.toBeNull(); expect(row?.version).toBe(2);
   });
+
+  it("rejects a bulk update for an unknown team before writing any ticket", async () => {
+    const workspace = await signup("bulk-team");
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "T", email: "t@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "Team bulk", message: "x" }) }, workspace)).json() as { ticket: { id: string } }).ticket;
+    const before = await env.DB.prepare("SELECT version FROM tickets WHERE id = ?").bind(ticket.id).first<{ version: number }>();
+    const response = await request("/operations/tickets/bulk", { method: "POST", body: JSON.stringify({ ticketIds: [ticket.id], assignedTeamId: "tem_missing" }) }, workspace);
+    expect(response.status).toBe(404);
+    expect((await response.json() as { error: { code: string } }).error.code).toBe("team_not_found");
+    const after = await env.DB.prepare("SELECT version FROM tickets WHERE id = ?").bind(ticket.id).first<{ version: number }>();
+    expect(after?.version).toBe(before?.version);
+  });
 });

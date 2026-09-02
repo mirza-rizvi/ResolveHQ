@@ -58,9 +58,13 @@ describe("tenant ticket workflow", () => {
     let row = await env.DB.prepare("SELECT status, waiting_since AS waitingSince FROM tickets WHERE id = ?").bind(ticket.id).first<{ status: string; waitingSince: number | null }>();
     expect(row?.status).toBe("waiting_customer"); expect(row?.waitingSince).not.toBeNull();
     await request(`/tickets/${ticket.id}`, { method: "PATCH", body: JSON.stringify({ status: "resolved" }) }, workspace);
+    await env.DB.prepare("UPDATE tickets SET resolved_at = 1000 WHERE id = ?").bind(ticket.id).run();
+    await request(`/tickets/${ticket.id}`, { method: "PATCH", body: JSON.stringify({ status: "resolved" }) }, workspace);
+    const reResolved = await env.DB.prepare("SELECT resolved_at AS resolvedAt FROM tickets WHERE id = ?").bind(ticket.id).first<{ resolvedAt: number }>();
+    expect(reResolved?.resolvedAt).toBe(1000);
     await request(`/tickets/${ticket.id}`, { method: "PATCH", body: JSON.stringify({ status: "closed" }) }, workspace);
     row = await env.DB.prepare("SELECT resolved_at AS resolvedAt, closed_at AS closedAt, waiting_since AS waitingSince FROM tickets WHERE id = ?").bind(ticket.id).first();
-    expect(row?.resolvedAt).not.toBeNull(); expect(row?.closedAt).not.toBeNull(); expect(row?.waitingSince).toBeNull();
+    expect(row?.resolvedAt).toBe(1000); expect(row?.closedAt).not.toBeNull(); expect(row?.waitingSince).toBeNull();
   });
 
   it("refuses to open a ticket when the workspace has no enabled inbox", async () => {

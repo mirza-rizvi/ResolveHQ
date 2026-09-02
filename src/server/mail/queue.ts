@@ -160,7 +160,7 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       // Reconcile the denormalized ticket state in case a previous delivery
       // stopped after the unique message insert but before the ticket update.
       await env.DB.prepare(
-        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, last_reply_at = max(coalesce(last_reply_at, 0), ?), last_customer_reply_at = max(coalesce(last_customer_reply_at, 0), ?), last_message_preview = ?, message_count = (SELECT count(*) FROM messages WHERE organization_id = ? AND ticket_id = ?) WHERE organization_id = ? AND id = ?",
+        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, waiting_since = NULL, last_reply_at = max(coalesce(last_reply_at, 0), ?), last_customer_reply_at = max(coalesce(last_customer_reply_at, 0), ?), last_message_preview = ?, message_count = (SELECT count(*) FROM messages WHERE organization_id = ? AND ticket_id = ?) WHERE organization_id = ? AND id = ?",
       ).bind(now.getTime(), now.getTime(), preview(mail.text), organizationId, ticket.id, organizationId, ticket.id).run();
       await refreshTicketSearch(env.DB, organizationId, ticket.id);
     }
