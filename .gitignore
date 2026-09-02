@@ -21,3 +21,12 @@ PRODUCT.md
 DESIGN.md
 *.tsbuildinfo
 AGENTS.md
+
+# Agent workflow artifacts
+.superpowers/
+docs/superpowers/
+.claude/
+.cursor/
+.windsurf/
+.aider*
+*.original.md
