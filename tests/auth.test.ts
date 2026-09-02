@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:test";
 import { hashPassword, verifyPassword } from "resolve-server/auth/password";
-import { request, signup } from "./helpers";
+import { login, request, signup } from "./helpers";
 
 describe("authentication", () => {
   it("hashes passwords with a unique salt and verifies them", async () => {
@@ -45,8 +45,12 @@ describe("authentication", () => {
 
   it("changes a password with the current one", async () => {
     const workspace = await signup("change");
+    const email = "owner-change@example.test";
+    const secondSession = await login(email, "a-secure-test-password");
     expect((await request("/auth/change-password", { method: "POST", body: JSON.stringify({ currentPassword: "wrong-password-value", newPassword: "a-brand-new-password-3" }) }, workspace)).status).toBe(401);
     expect((await request("/auth/change-password", { method: "POST", body: JSON.stringify({ currentPassword: "a-secure-test-password", newPassword: "a-brand-new-password-3" }) }, workspace)).status).toBe(200);
-    expect((await request("/auth/login", { method: "POST", body: JSON.stringify({ email: "owner-change@example.test", password: "a-brand-new-password-3" }) })).status).toBe(200);
+    expect((await request("/auth/login", { method: "POST", body: JSON.stringify({ email, password: "a-brand-new-password-3" }) })).status).toBe(200);
+    expect((await request("/auth/me", {}, workspace)).status).toBe(200);
+    expect((await request("/auth/me", {}, secondSession)).status).toBe(401);
   });
 });

@@ -18,6 +18,15 @@ export async function signup(suffix: string): Promise<TestSession> {
   return session;
 }
 
+export async function login(email: string, password: string): Promise<TestSession> {
+  const response = await request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+  if (response.status !== 200) throw new Error(`Login failed: ${response.status} ${await response.text()}`);
+  const body = await response.json() as { user: { id: string }; organization: { id: string }; csrfToken: string };
+  const cookies = response.headers.get("set-cookie") ?? "";
+  const found = [...cookies.matchAll(/(resolvehq_(?:session|csrf))=([^;,]+)/g)];
+  return { cookie: found.map((match) => `${match[1]}=${match[2]}`).join("; "), csrf: body.csrfToken, userId: body.user.id, organizationId: body.organization.id };
+}
+
 export function request(path: string, init: RequestInit = {}, session?: TestSession) {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData)) headers.set("content-type", "application/json");
