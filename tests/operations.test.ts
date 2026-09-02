@@ -127,4 +127,18 @@ describe("operational workflows", () => {
     const after = await env.DB.prepare("SELECT version FROM tickets WHERE id = ?").bind(ticket.id).first<{ version: number }>();
     expect(after?.version).toBe(before?.version);
   });
+
+  it("reports queue counts and de-duplicates saved views", async () => {
+    const workspace = await signup("counts");
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "C", email: "c@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "One", message: "x" }) }, workspace);
+    const counts = (await (await request("/tickets/counts", {}, workspace)).json() as { counts: Record<string, number> }).counts;
+    expect(counts).toMatchObject({ all: 1, waiting_customer: 1, open: 0, unassigned: 1, mine: 0 });
+    const first = await request("/operations/views", { method: "POST", body: JSON.stringify({ name: "Open tickets", filters: { status: "open" } }) }, workspace);
+    const second = await request("/operations/views", { method: "POST", body: JSON.stringify({ name: "Open tickets", filters: { status: "open" } }) }, workspace);
+    expect(first.status).toBe(201); expect(second.status).toBe(200);
+    const views = (await (await request("/operations/views", {}, workspace)).json() as { views: Array<{ id: string }> }).views;
+    expect(views).toHaveLength(1);
+    expect((await request(`/operations/views/${views[0].id}`, { method: "DELETE" }, workspace)).status).toBe(204);
+  });
 });

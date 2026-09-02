@@ -160,6 +160,25 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
   return context.json({ ticket: { id: ticketId, number: numberRow.number, subject: input.subject, status: "waiting_customer", priority: input.priority } }, 201);
 });
 
+ticketRoutes.get("/counts", async (context) => {
+  const tenant = context.get("tenant");
+  const row = await context.env.DB.prepare(
+    "SELECT count(*) AS all_count, sum(status='open') AS open, sum(status='pending') AS pending, sum(status='waiting_customer') AS waiting_customer, sum(status='resolved') AS resolved, sum(status='closed') AS closed, sum(assigned_user_id IS NULL AND status NOT IN ('resolved','closed')) AS unassigned, sum(assigned_user_id = ? AND status NOT IN ('resolved','closed')) AS mine FROM tickets WHERE organization_id = ?",
+  ).bind(tenant.userId, tenant.organizationId).first<Record<string, number | null>>();
+  return context.json({
+    counts: {
+      all: row?.all_count ?? 0,
+      open: row?.open ?? 0,
+      pending: row?.pending ?? 0,
+      waiting_customer: row?.waiting_customer ?? 0,
+      resolved: row?.resolved ?? 0,
+      closed: row?.closed ?? 0,
+      unassigned: row?.unassigned ?? 0,
+      mine: row?.mine ?? 0,
+    },
+  });
+});
+
 ticketRoutes.get("/:id", async (context) => {
   const tenant = context.get("tenant");
   const db = createDb(context.env.DB);

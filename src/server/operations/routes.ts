@@ -10,7 +10,7 @@ import { validate } from "../http/validate";
 import { newId } from "../lib/id";
 import { applyTicketUpdate, assertActiveMember, assertTeam, type TicketChanges } from "../tickets/service";
 import type { HonoEnv } from "../types";
-import { ticketPriorities, ticketStatuses } from "../../shared/domain";
+import { roleRank, ticketPriorities, ticketStatuses } from "../../shared/domain";
 
 const draftInput = z.object({
   body: z.string().max(100_000),
@@ -111,9 +111,25 @@ operationRoutes.post("/views", validate("json", z.object({ name: z.string().trim
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   if (input.visibility === "shared" && tenant.role === "agent") throw new HttpError(403, "forbidden", "Only admins can create shared views.");
+  const normalizedFilters = normalizeFilters(input.filters);
+  const existing = await context.env.DB.prepare(
+    "SELECT id, name, visibility, filters FROM saved_views WHERE organization_id = ? AND owner_user_id = ? AND name = ? AND filters = ?",
+  ).bind(tenant.organizationId, tenant.userId, input.name, normalizedFilters).first<{ id: string; name: string; visibility: "personal" | "shared"; filters: string }>();
+  if (existing) {
+    return context.json({ view: { id: existing.id, name: existing.name, visibility: existing.visibility, filters: JSON.parse(existing.filters) } }, 200);
+  }
   const id = newId("viw");
   await createDb(context.env.DB).insert(savedViews).values({ id, organizationId: tenant.organizationId, ownerUserId: tenant.userId, name: input.name, visibility: input.visibility, filters: input.filters });
   return context.json({ view: { id, ...input } }, 201);
+});
+
+operationRoutes.delete("/views/:id", async (context) => {
+  const tenant = context.get("tenant");
+  const [view] = await createDb(context.env.DB).select({ id: savedViews.id, ownerUserId: savedViews.ownerUserId }).from(savedViews).where(and(eq(savedViews.id, context.req.param("id")), eq(savedViews.organizationId, tenant.organizationId))).limit(1);
+  if (!view) throw new HttpError(404, "view_not_found", "Saved view not found.");
+  if (view.ownerUserId !== tenant.userId && roleRank[tenant.role] < roleRank.admin) throw new HttpError(403, "forbidden", "You can only delete your own saved views.");
+  await createDb(context.env.DB).delete(savedViews).where(and(eq(savedViews.id, context.req.param("id")), eq(savedViews.organizationId, tenant.organizationId)));
+  return context.body(null, 204);
 });
 
 operationRoutes.get("/teams", async (context) => {
@@ -178,6 +194,15 @@ operationRoutes.get("/dev-mail", requireRole("admin"), async (context) => {
   ).bind(tenant.organizationId, me?.email ?? "").all();
   return context.json({ captures: rows.results.map((row) => ({ ...row, headers: JSON.parse(String(row.headers)) })) });
 });
+
+function normalizeFilters(filters: z.infer<typeof viewFilters>): string {
+  const ordered: Record<string, unknown> = {};
+  if (filters.status !== undefined) ordered.status = filters.status;
+  if (filters.priority !== undefined) ordered.priority = filters.priority;
+  if (filters.assignee !== undefined) ordered.assignee = filters.assignee;
+  if (filters.tagId !== undefined) ordered.tagId = filters.tagId;
+  return JSON.stringify(ordered);
+}
 
 async function assertTicket(database: D1Database, organizationId: string, ticketId: string) {
   const ticket = await database.prepare("SELECT 1 FROM tickets WHERE organization_id = ? AND id = ?").bind(organizationId, ticketId).first();
