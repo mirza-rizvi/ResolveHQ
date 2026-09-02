@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { processInboundMail, processOutboundMail } from "resolve-server/mail/queue";
+import { sendSystemMail } from "resolve-server/mail/system";
 import type { AppBindings } from "resolve-server/types";
 import { signup } from "./helpers";
 
@@ -70,6 +71,27 @@ describe("mail queue workflow", () => {
     const listed = await request("/operations/dev-mail", {}, workspace);
     expect(listed.status).toBe(200);
     expect(((await listed.json()) as { captures: unknown[] }).captures.length).toBeGreaterThan(0);
+  });
+});
+
+describe("system mail", () => {
+  it("persists system mail as an organization-less capture using the default from address", async () => {
+    await sendSystemMail(env as AppBindings, { to: "notify-default@example.test", subject: "Default from address", text: "hello" });
+    const capture = await env.DB.prepare("SELECT organization_id AS organizationId, from_address AS \"from\" FROM mail_captures WHERE to_address = ?").bind("notify-default@example.test").first<{ organizationId: string | null; from: string }>();
+    expect(capture?.organizationId).toBeNull();
+    expect(capture?.from).toBe("no-reply@localhost");
+  });
+
+  it("honors a SYSTEM_MAIL_FROM override", async () => {
+    await sendSystemMail({ ...env, SYSTEM_MAIL_FROM: "alerts@resolvehq.test" } as AppBindings, { to: "notify-override@example.test", subject: "Custom from address", text: "hello" });
+    const capture = await env.DB.prepare("SELECT from_address AS \"from\" FROM mail_captures WHERE to_address = ?").bind("notify-override@example.test").first<{ from: string }>();
+    expect(capture?.from).toBe("alerts@resolvehq.test");
+  });
+
+  it("rejects when no outgoing mail provider is configured", async () => {
+    await expect(
+      sendSystemMail({ ...env, DEV_MAIL_MODE: "disabled" } as AppBindings, { to: "notify-unconfigured@example.test", subject: "No provider", text: "hello" }),
+    ).rejects.toThrow("No outgoing mail provider is configured.");
   });
 });
 
