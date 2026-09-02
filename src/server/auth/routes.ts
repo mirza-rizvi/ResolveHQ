@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { z } from "zod";
 import { createDb } from "resolve-server/db";
-import { organizationInvitations, organizationMemberships, organizations, passwordResetTokens, sessions, users } from "resolve-server/db/schema";
+import { inboxes, organizationInvitations, organizationMemberships, organizations, passwordResetTokens, sessions, users } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import { newId } from "resolve-server/lib/id";
@@ -23,6 +23,7 @@ const signupInput = credentials.extend({
   name: z.string().trim().min(2).max(100),
   organizationName: z.string().trim().min(2).max(100),
   organizationSlug: z.string().trim().min(2).max(48).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  supportEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()).optional(),
 });
 
 export const authRoutes = new Hono<HonoEnv>();
@@ -40,16 +41,24 @@ authRoutes.post("/signup", validate("json", signupInput), async (context) => {
   const userId = newId("usr");
   const organizationId = newId("org");
   const now = new Date();
-  await db.batch([
-    db.insert(users).values({
-      id: userId,
-      email: input.email,
-      name: input.name,
-      passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER),
-    }),
-    db.insert(organizations).values({ id: organizationId, name: input.organizationName, slug: input.organizationSlug }),
-    db.insert(organizationMemberships).values({ organizationId, userId, role: "owner", createdAt: now }),
-  ]);
+  const insertUser = db.insert(users).values({
+    id: userId,
+    email: input.email,
+    name: input.name,
+    passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER),
+  });
+  const insertOrganization = db.insert(organizations).values({ id: organizationId, name: input.organizationName, slug: input.organizationSlug, supportEmail: input.supportEmail });
+  const insertMembership = db.insert(organizationMemberships).values({ organizationId, userId, role: "owner", createdAt: now });
+  try {
+    if (input.supportEmail) {
+      await db.batch([insertUser, insertOrganization, insertMembership, db.insert(inboxes).values({ id: newId("inb"), organizationId, name: "Support", emailAddress: input.supportEmail, provider: "cloudflare_email", isDefault: true })]);
+    } else {
+      await db.batch([insertUser, insertOrganization, insertMembership]);
+    }
+  } catch (error) {
+    if (String(error).includes("UNIQUE")) throw new HttpError(409, "inbox_address_exists", "That inbox address is already in use.");
+    throw error;
+  }
 
   const csrfToken = await createSession(context, userId, organizationId);
   return context.json({ user: { id: userId, email: input.email, name: input.name }, organization: { id: organizationId, name: input.organizationName, slug: input.organizationSlug }, role: "owner", csrfToken }, 201);

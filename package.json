@@ -12,6 +12,7 @@
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:web": "vitest run --config vitest.web.config.ts",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
     "cf-typegen": "wrangler types",

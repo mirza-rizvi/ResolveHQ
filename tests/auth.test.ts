@@ -80,4 +80,27 @@ describe("authentication", () => {
     const membership = await env.DB.prepare("SELECT * FROM organization_memberships WHERE organization_id = ? AND user_id = ?").bind(host.organizationId, guest.userId).first();
     expect(membership).toBeNull();
   });
+
+  it("creates a default support inbox when signup supplies a support email", async () => {
+    const suffix = "signup-inbox";
+    const response = await request("/auth/signup", { method: "POST", body: JSON.stringify({ name: `Owner ${suffix}`, email: `owner-${suffix}@example.test`, password: "a-secure-test-password", organizationName: `Workspace ${suffix}`, organizationSlug: `workspace-${suffix}`, supportEmail: `Support-${suffix}@Example.test` }) });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { csrfToken: string; user: { id: string }; organization: { id: string } };
+    const cookies = [...(response.headers.get("set-cookie") ?? "").matchAll(/(resolvehq_(?:session|csrf))=([^;,]+)/g)];
+    const session = { cookie: cookies.map((match) => `${match[1]}=${match[2]}`).join("; "), csrf: body.csrfToken, userId: body.user.id, organizationId: body.organization.id };
+
+    const settings = await (await request("/organization/settings", {}, session)).json() as { inboxes: Array<{ name: string; emailAddress: string; isDefault: boolean }> };
+    expect(settings.inboxes).toHaveLength(1);
+    expect(settings.inboxes[0]).toMatchObject({ name: "Support", emailAddress: `support-${suffix}@example.test`, isDefault: true });
+    expect(await env.DB.prepare("SELECT support_email FROM organizations WHERE id = ?").bind(session.organizationId).first<{ support_email: string }>()).toMatchObject({ support_email: `support-${suffix}@example.test` });
+
+    const customer = await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "Signup Customer", email: `customer-${suffix}@example.test` }) }, session)).json() as { customer: { id: string } };
+    const ticket = await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.customer.id, subject: "Inbox came from signup", message: "No manual inbox creation needed." }) }, session);
+    expect(ticket.status).toBe(201);
+
+    const duplicate = await request("/auth/signup", { method: "POST", body: JSON.stringify({ name: "Second Owner", email: `owner-${suffix}-2@example.test`, password: "a-secure-test-password", organizationName: "Second Workspace", organizationSlug: `workspace-${suffix}-2`, supportEmail: `support-${suffix}@example.test` }) });
+    expect(duplicate.status).toBe(409);
+    expect(await duplicate.json()).toMatchObject({ error: { code: "inbox_address_exists" } });
+    expect(await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(`owner-${suffix}-2@example.test`).first()).toBeNull();
+  });
 });

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, CircleAlert, Clock3, Inbox, UserRoundX } from "lucide-react";
+import { ArrowUpRight, CircleAlert, Clock3, Inbox, TriangleAlert, UserRoundX } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "@/web/lib/api";
 
@@ -11,6 +11,7 @@ interface DashboardData {
 
 export function DashboardPage() {
   const { data, isPending, error } = useQuery({ queryKey: ["dashboard"], queryFn: () => api<DashboardData>("/operations/dashboard"), refetchInterval: 30_000 });
+  const { data: settings } = useQuery({ queryKey: ["organization-settings"], queryFn: () => api<{ inboxes: unknown[] }>("/organization/settings") });
   const metrics = data?.metrics ?? { openTickets: 0, unassignedTickets: 0, waitingForCustomer: 0, urgentTickets: 0, resolvedToday: 0 };
   const measures = [
     ["Open tickets", metrics.openTickets, Inbox, "/inbox?queue=open"],
@@ -20,6 +21,7 @@ export function DashboardPage() {
     ["Resolved today", metrics.resolvedToday, ArrowUpRight, "/inbox?queue=resolved"],
   ] as const;
   return <div className="standard-page"><header className="page-header"><div><h1>Overview</h1><p>What needs the team’s attention right now.</p></div><Link className="text-link" to="/inbox">Open inbox <ArrowUpRight size={15} /></Link></header>
+    {settings && !settings.inboxes.length && <p className="page-banner"><TriangleAlert size={15} />No support inbox configured — replies cannot be sent. <Link to="/settings">Add one in Settings.</Link></p>}
     <section className="measure-strip" aria-label="Ticket summary">{measures.map(([label, count, Icon, href]) => <Link key={label} to={href} aria-busy={isPending}><Icon size={17} /><span>{label}</span><strong>{isPending ? "—" : count}</strong></Link>)}</section>
     {error && <p className="page-error">Dashboard data could not be refreshed. Try again in a moment.</p>}
     <div className="dashboard-columns"><section><div className="section-heading"><h2>Recent tickets</h2><span>Last activity</span></div><div className="activity-ledger">{data?.recentTickets.map((ticket) => <Link key={ticket.id} to={`/inbox/${ticket.id}`}><span className={`status-pin status-${ticket.status}`} /><div><strong>{ticket.subject}</strong><small>#{ticket.number} · {ticket.customerName}</small></div><time>{relativeTime(ticket.updatedAt)}</time></Link>)}</div></section>

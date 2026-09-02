@@ -1,23 +1,25 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { useAuth, type Session } from "@/web/auth";
-import { api } from "@/web/lib/api";
+import { api, errorMessage } from "@/web/lib/api";
 import { Button, Input } from "@/web/components/ui";
 
 export function LoginPage() {
   const { session, refresh } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  if (session) return <Navigate to="/inbox" replace />;
+  const destination = safeNext(params.get("next"));
+  if (session) return <Navigate to={destination} replace />;
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(""); setSubmitting(true);
     const form = new FormData(event.currentTarget);
     try {
       await api<Session>("/auth/login", { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password") }) });
-      await refresh(); navigate("/inbox");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Sign in failed."); }
+      await refresh(); navigate(destination);
+    } catch (reason) { setError(errorMessage(reason, "Sign in failed.")); }
     finally { setSubmitting(false); }
   }
   return <AuthSurface>
@@ -27,9 +29,14 @@ export function LoginPage() {
       <label>Password<Input name="password" type="password" autoComplete="current-password" minLength={12} required /></label>
       {error && <p className="form-error" role="alert">{error}</p>}
       <Button disabled={submitting} type="submit">{submitting ? "Signing in…" : "Sign in"}<ArrowRight size={16} /></Button>
+      <Link className="auth-form-link" to="/forgot-password">Forgot password?</Link>
     </form>
     <p className="auth-switch">New workspace? <Link to="/signup">Create an account</Link></p>
   </AuthSurface>;
+}
+
+export function safeNext(value: string | null) {
+  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/inbox";
 }
 
 export function AuthSurface({ children }: { children: React.ReactNode }) {
