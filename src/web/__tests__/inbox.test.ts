@@ -3,7 +3,7 @@ import { ticketSearchParams } from "@/web/hooks/use-tickets";
 import { resolveContentType } from "@/web/inbox/attachments";
 import { formatBytes, relativeTime } from "@/web/inbox/format";
 import { filtersForQueue, queueForFilters, queueLabel } from "@/web/inbox/queues";
-import { chordPending, clearChord, startChord } from "@/web/lib/chord";
+import { chordConsumed, chordPending, clearChord, consumeChord, startChord } from "@/web/lib/chord";
 
 afterEach(() => {
   clearChord();
@@ -28,8 +28,25 @@ describe("chord", () => {
 
   it("stops being pending once the chord is consumed", () => {
     startChord();
-    clearChord();
+    consumeChord(new KeyboardEvent("keydown", { key: "k" }));
     expect(chordPending()).toBe(false);
+  });
+
+  it("marks the consumed keystroke so a later listener still stands aside", () => {
+    const consumed = new KeyboardEvent("keydown", { key: "k" });
+    startChord();
+    consumeChord(consumed);
+    // The shell ran first: nothing is pending any more, but this very event was
+    // the second half of `g k` and must not also move the inbox selection.
+    expect(chordConsumed(consumed)).toBe(true);
+    expect(chordConsumed(new KeyboardEvent("keydown", { key: "k" }))).toBe(false);
+  });
+
+  it("forgets the consumed keystroke once the chord state is cleared", () => {
+    const consumed = new KeyboardEvent("keydown", { key: "k" });
+    consumeChord(consumed);
+    clearChord();
+    expect(chordConsumed(consumed)).toBe(false);
   });
 });
 

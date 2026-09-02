@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const timestamps = {
@@ -241,9 +242,17 @@ export const messages = sqliteTable(
   },
   (table) => [
     index("messages_organization_ticket_created_idx").on(table.organizationId, table.ticketId, table.createdAt),
-    uniqueIndex("messages_organization_provider_uidx").on(table.organizationId, table.providerMessageId),
-    uniqueIndex("messages_organization_client_uidx").on(table.organizationId, table.clientMessageId),
-    uniqueIndex("messages_organization_rfc_uidx").on(table.organizationId, table.rfcMessageId),
+    // Partial: a message without a provider/client/RFC id is not a duplicate of
+    // every other message that lacks one.
+    uniqueIndex("messages_organization_provider_uidx")
+      .on(table.organizationId, table.providerMessageId)
+      .where(sql`${table.providerMessageId} IS NOT NULL`),
+    uniqueIndex("messages_organization_client_uidx")
+      .on(table.organizationId, table.clientMessageId)
+      .where(sql`${table.clientMessageId} IS NOT NULL`),
+    uniqueIndex("messages_organization_rfc_uidx")
+      .on(table.organizationId, table.rfcMessageId)
+      .where(sql`${table.rfcMessageId} IS NOT NULL`),
   ],
 );
 
@@ -266,7 +275,9 @@ export const inboundMailEvents = sqliteTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("inbound_events_inbox_provider_uidx").on(table.inboxId, table.providerMessageId),
+    uniqueIndex("inbound_events_inbox_provider_uidx")
+      .on(table.inboxId, table.providerMessageId)
+      .where(sql`${table.providerMessageId} IS NOT NULL`),
     index("inbound_events_status_updated_idx").on(table.status, table.updatedAt),
   ],
 );
@@ -511,9 +522,10 @@ export const attachments = sqliteTable(
   (table) => [
     index("attachments_organization_ticket_idx").on(table.organizationId, table.ticketId),
     index("attachments_organization_message_idx").on(table.organizationId, table.messageId),
-    // The migration declares this one partial (`WHERE message_id IS NULL`) for the
-    // orphan sweep; drizzle cannot express that, so the migration is authoritative.
-    index("attachments_pending_idx").on(table.messageId, table.createdAt),
+    // Partial: only the unlinked rows the orphan sweep walks.
+    index("attachments_pending_idx")
+      .on(table.messageId, table.createdAt)
+      .where(sql`${table.messageId} IS NULL`),
   ],
 );
 

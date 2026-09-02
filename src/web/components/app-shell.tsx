@@ -18,7 +18,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/web/auth";
 import { useDialogFocus } from "@/web/hooks/use-dialog-focus";
 import { errorMessage } from "@/web/lib/api";
-import { chordPending, clearChord, startChord } from "@/web/lib/chord";
+import { chordPending, consumeChord, startChord } from "@/web/lib/chord";
 import { useToast } from "./toast";
 import { Button } from "./ui";
 
@@ -73,7 +73,9 @@ export function AppShell() {
           event.preventDefault();
           navigate(destination.href);
         }
-        clearChord();
+        // Recorded against this event so a page handler that runs after this
+        // one still knows the keystroke belonged to the chord.
+        consumeChord(event);
       }
     };
     window.addEventListener("keydown", onKeyDown);

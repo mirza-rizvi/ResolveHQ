@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { MessageKind, TicketSummary } from "@/web/inbox/types";
-import { chordPending } from "@/web/lib/chord";
+import { chordConsumed, chordPending } from "@/web/lib/chord";
 
 interface InboxShortcutOptions {
   tickets: TicketSummary[];
@@ -31,8 +31,10 @@ export function useInboxShortcuts({
       }
       if (editing || event.metaKey || event.ctrlKey || event.altKey) return;
       // The shell's `g` chord owns the next keystroke — `g k` goes to Knowledge
-      // rather than also walking the queue up one row on the way there.
-      if (chordPending()) return;
+      // rather than also walking the queue up one row on the way there. Listener
+      // order is not guaranteed, so the already-consumed event counts too: if
+      // the shell ran first the chord is no longer pending by the time we look.
+      if (chordPending() || chordConsumed(event)) return;
       if (event.key === "/") {
         event.preventDefault();
         onFocusSearch();

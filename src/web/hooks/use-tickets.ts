@@ -38,6 +38,9 @@ export function useTickets(filters: TicketFilters) {
     tickets: query.data ?? [],
     isPending: query.isPending,
     isFetching: query.isFetching,
+    // True while the rows on screen are still the previous filters' — callers
+    // that act on the list (auto-select) have to wait for the real page.
+    isPlaceholderData: query.isPlaceholderData,
     error: query.error,
     refetch: query.refetch,
   };

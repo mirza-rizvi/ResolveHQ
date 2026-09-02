@@ -212,6 +212,9 @@ export function ConversationPanel({
             ))}
           </div>
           <Composer
+            // Remounted per ticket: the pending attachments the composer holds
+            // locally belong to the ticket they were uploaded against.
+            key={conversation.ticket.id}
             formRef={composerFormRef}
             ticketId={conversation.ticket.id}
             kind={messageKind}

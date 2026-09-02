@@ -39,7 +39,12 @@ export function InboxPage() {
   }, [query]);
 
   const workspace = useWorkspaceData();
-  const { tickets, isPending: ticketsPending, error: ticketsError } = useTickets({ queue, priority, q: search });
+  const {
+    tickets,
+    isPending: ticketsPending,
+    isPlaceholderData: ticketsArePrevious,
+    error: ticketsError,
+  } = useTickets({ queue, priority, q: search });
   const { counts } = useTicketCounts();
   const conversation = useConversation(ticketId);
   const draft = useDraft(ticketId);
@@ -50,11 +55,13 @@ export function InboxPage() {
   });
 
   // On a wide screen the rundown always has something open; on mobile the list
-  // is the page, so it stays the list until a row is tapped.
+  // is the page, so it stays the list until a row is tapped. While the rows on
+  // screen are still the previous queue's, opening one of them would land the
+  // agent on a ticket that is not in the queue they just picked.
   useEffect(() => {
-    if (ticketId || !tickets.length || window.matchMedia("(max-width: 900px)").matches) return;
+    if (ticketId || ticketsArePrevious || !tickets.length || window.matchMedia("(max-width: 900px)").matches) return;
     navigate(`/inbox/${tickets[0].id}?${params}`, { replace: true });
-  }, [navigate, params, ticketId, tickets]);
+  }, [navigate, params, ticketId, tickets, ticketsArePrevious]);
 
   const selectQueue = useCallback(
     (next: string) => {
@@ -71,6 +78,11 @@ export function InboxPage() {
     setCreateError("");
   }, []);
   const closeCustomerDetail = useCallback(() => setCustomerId(""), []);
+  // `useDraft` hands back a fresh object every render, so the shortcut handler
+  // reaches its setter through a ref: the keydown effect below then subscribes
+  // once instead of re-registering after the shell's listener on every render.
+  const setDraftKind = useRef(draft.setKind);
+  setDraftKind.current = draft.setKind;
 
   useInboxShortcuts({
     tickets,
@@ -89,15 +101,12 @@ export function InboxPage() {
     }, [closeCreateDialog, createOpen, customerId, navigate, params, ticketId]),
     onFocusSearch: useCallback(() => searchInput.current?.focus(), []),
     onSelectTicket: useCallback((id: string) => navigate(`/inbox/${id}?${params}`), [navigate, params]),
-    onCompose: useCallback(
-      (kind: MessageKind) => {
-        draft.setKind(kind);
-        window.requestAnimationFrame(() =>
-          composerForm.current?.querySelector<HTMLElement>("[contenteditable='true']")?.focus(),
-        );
-      },
-      [draft],
-    ),
+    onCompose: useCallback((kind: MessageKind) => {
+      setDraftKind.current(kind);
+      window.requestAnimationFrame(() =>
+        composerForm.current?.querySelector<HTMLElement>("[contenteditable='true']")?.focus(),
+      );
+    }, []),
   });
 
   const createTicket = useMutation({
