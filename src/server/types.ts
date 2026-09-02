@@ -5,6 +5,7 @@ export interface AppBindings {
   INBOUND_MAIL_QUEUE: Queue<MailQueueMessage>;
   OUTBOUND_MAIL_QUEUE: Queue<MailQueueMessage>;
   AUTH_RATE_LIMIT: RateLimit;
+  WRITE_RATE_LIMIT: RateLimit;
   APP_URL: string;
   SESSION_PEPPER: string;
   DEV_MAIL_MODE: "capture" | "disabled";

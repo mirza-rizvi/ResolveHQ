@@ -236,6 +236,7 @@ export const outboundMailJobs = sqliteTable(
   (table) => [
     uniqueIndex("outbound_jobs_message_uidx").on(table.messageId),
     index("outbound_jobs_status_next_idx").on(table.status, table.nextAttemptAt),
+    index("outbound_jobs_provider_idx").on(table.providerMessageId),
   ],
 );
 

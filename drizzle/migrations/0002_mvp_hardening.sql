@@ -57,3 +57,5 @@ CREATE INDEX `attachments_organization_ticket_idx` ON `attachments` (`organizati
 CREATE INDEX `attachments_organization_message_idx` ON `attachments` (`organization_id`,`message_id`);
 --> statement-breakpoint
 CREATE INDEX `attachments_pending_idx` ON `attachments` (`message_id`,`created_at`) WHERE `message_id` IS NULL;
+--> statement-breakpoint
+CREATE INDEX `outbound_jobs_provider_idx` ON `outbound_mail_jobs` (`provider_message_id`);

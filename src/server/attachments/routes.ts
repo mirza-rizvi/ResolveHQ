@@ -22,7 +22,7 @@ attachmentRoutes.use("*", requireAuth);
 
 attachmentRoutes.post("/intents", async (context) => {
   const tenant = context.get("tenant");
-  if (!(await context.env.AUTH_RATE_LIMIT.limit({ key: `upload:${tenant.userId}` })).success) throw new HttpError(429, "rate_limited", "Slow down and try again in a moment.");
+  if (!(await context.env.WRITE_RATE_LIMIT.limit({ key: `upload:${tenant.userId}` })).success) throw new HttpError(429, "rate_limited", "Slow down and try again in a moment.");
   const input = await context.req.json<{ ticketId?: string; messageId?: string; filename?: string; contentType?: string; size?: number }>().catch(() => null);
   if (!input) throw new HttpError(400, "invalid_upload", "File metadata must be valid JSON.");
   if (!input.ticketId || !input.messageId || !input.filename || !input.contentType || !Number.isInteger(input.size)) throw new HttpError(400, "invalid_upload", "File metadata is incomplete.");

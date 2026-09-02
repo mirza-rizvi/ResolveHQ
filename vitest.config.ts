@@ -14,7 +14,7 @@ export default defineConfig(async () => {
         d1Databases: ["DB"],
         r2Buckets: ["ATTACHMENTS"],
         queueProducers: { INBOUND_MAIL_QUEUE: "resolvehq-test-inbound", OUTBOUND_MAIL_QUEUE: "resolvehq-test-outbound" },
-        ratelimits: { AUTH_RATE_LIMIT: { namespace_id: "1001", simple: { limit: 1000, period: 60 } } },
+        ratelimits: { AUTH_RATE_LIMIT: { namespace_id: "1001", simple: { limit: 1000, period: 60 } }, WRITE_RATE_LIMIT: { namespace_id: "1002", simple: { limit: 1000, period: 60 } } },
         bindings: {
           APP_URL: "http://localhost:8787",
           SESSION_PEPPER: "test-resolvehq-session-pepper-at-least-32-characters",

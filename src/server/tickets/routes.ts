@@ -204,7 +204,7 @@ ticketRoutes.patch("/:id", validate("json", updateTicketInput), async (context) 
 
 ticketRoutes.post("/:id/messages", validate("json", messageInput), async (context) => {
   const tenant = context.get("tenant");
-  if (!(await context.env.AUTH_RATE_LIMIT.limit({ key: `messages:${tenant.userId}` })).success) throw new HttpError(429, "rate_limited", "Slow down and try again in a moment.");
+  if (!(await context.env.WRITE_RATE_LIMIT.limit({ key: `messages:${tenant.userId}` })).success) throw new HttpError(429, "rate_limited", "Slow down and try again in a moment.");
   const input = context.req.valid("json");
   const db = createDb(context.env.DB);
   const [ticket] = await db.select({ id: tickets.id, customerId: tickets.customerId, status: tickets.status }).from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
@@ -215,7 +215,7 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
   // An agent reply hands the conversation back to the customer; internal notes,
   // and tickets already waiting, resolved, or closed, keep the status they had.
   const handsOffToCustomer = input.kind === "message" && (ticket.status === "open" || ticket.status === "pending");
-  const values: typeof messages.$inferInsert = { id, organizationId: tenant.organizationId, ticketId: ticket.id, authorType: "agent", authorUserId: tenant.userId, kind: input.kind, bodyText: input.body, bodyHtml: input.kind === "message" && input.bodyHtml ? sanitizeHtml(input.bodyHtml) : null, normalizedSearch: normalizeSearch(input.body), clientMessageId: input.clientMessageId, deliveryStatus: input.kind === "message" ? "queued" : "received" };
+  const values: typeof messages.$inferInsert = { id, organizationId: tenant.organizationId, ticketId: ticket.id, authorType: "agent", authorUserId: tenant.userId, kind: input.kind, bodyText: input.body, bodyHtml: input.kind === "message" && input.bodyHtml ? sanitizeHtml(input.bodyHtml) || null : null, normalizedSearch: normalizeSearch(input.body), clientMessageId: input.clientMessageId, deliveryStatus: input.kind === "message" ? "queued" : "received" };
   // The unique (organization_id, client_message_id) index arbitrates duplicate
   // submits instead of a read-then-write check, which two concurrent retries
   // can both pass. That index is partial, and SQLite only matches a conflict
