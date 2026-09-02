@@ -72,6 +72,40 @@ describe("mail queue workflow", () => {
     expect(listed.status).toBe(200);
     expect(((await listed.json()) as { captures: unknown[] }).captures.length).toBeGreaterThan(0);
   });
+
+  it("threads a customer reply onto the ticket the agent replied from", async () => {
+    const workspace = await signup("mail-thread");
+    const { request } = await import("./helpers");
+    await request("/organization/inboxes", { method: "POST", body: JSON.stringify({ name: "Support", emailAddress: "thread@example.test" }) }, workspace);
+    await processInboundMail(env as AppBindings, { raw: mimeMessage({ id: "<first@example.test>", to: "thread@example.test", subject: "Login broken", body: "Cannot sign in." }), from: "customer@example.test", to: "thread@example.test" });
+    const ticket = await env.DB.prepare("SELECT id FROM tickets WHERE organization_id = ?").bind(workspace.organizationId).first<{ id: string }>();
+    const reply = await (await request(`/tickets/${ticket!.id}/messages`, { method: "POST", body: JSON.stringify({ body: "Try resetting.", kind: "message" }) }, workspace)).json() as { message: { id: string } };
+    const job = await env.DB.prepare("SELECT id FROM outbound_mail_jobs WHERE message_id = ?").bind(reply.message.id).first<{ id: string }>();
+    await processOutboundMail(env as AppBindings, { jobId: job!.id });
+    const sent = await env.DB.prepare("SELECT rfc_message_id AS rfc FROM messages WHERE id = ?").bind(reply.message.id).first<{ rfc: string }>();
+    expect(sent?.rfc).toMatch(/^<.+@example\.test>$/);
+    const capture = await env.DB.prepare("SELECT headers FROM mail_captures WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1").bind(workspace.organizationId).first<{ headers: string }>();
+    expect(JSON.parse(capture!.headers)["In-Reply-To"]).toBe("<first@example.test>");
+    await request(`/tickets/${ticket!.id}`, { method: "PATCH", body: JSON.stringify({ status: "resolved" }) }, workspace);
+
+    await processInboundMail(env as AppBindings, { raw: mimeMessage({ id: "<second@example.test>", to: "thread@example.test", subject: "Re: [#1001] Login broken", body: "Still broken.", inReplyTo: sent!.rfc }), from: "customer@example.test", to: "thread@example.test" });
+    const count = await env.DB.prepare("SELECT count(*) AS count FROM tickets WHERE organization_id = ?").bind(workspace.organizationId).first<{ count: number }>();
+    expect(count?.count).toBe(1);
+    const state = await env.DB.prepare("SELECT status, message_count AS messages FROM tickets WHERE id = ?").bind(ticket!.id).first<{ status: string; messages: number }>();
+    expect(state).toMatchObject({ status: "open", messages: 3 });
+  });
+
+  it("falls back to the subject ticket number only for the same customer", async () => {
+    const workspace = await signup("mail-subject");
+    const { request } = await import("./helpers");
+    await request("/organization/inboxes", { method: "POST", body: JSON.stringify({ name: "Support", emailAddress: "subject@example.test" }) }, workspace);
+    await processInboundMail(env as AppBindings, { raw: mimeMessage({ id: "<s1@example.test>", to: "subject@example.test", subject: "Invoice", body: "Where is it?" }), from: "customer@example.test", to: "subject@example.test" });
+    const ticket = await env.DB.prepare("SELECT number FROM tickets WHERE organization_id = ?").bind(workspace.organizationId).first<{ number: number }>();
+    await processInboundMail(env as AppBindings, { raw: mimeMessage({ id: "<s2@example.test>", to: "subject@example.test", subject: `Re: [#${ticket!.number}] Invoice`, body: "Following up." }), from: "customer@example.test", to: "subject@example.test" });
+    await processInboundMail(env as AppBindings, { raw: mimeMessage({ id: "<s3@example.test>", to: "subject@example.test", subject: `Re: [#${ticket!.number}] Invoice`, body: "I am someone else.", from: "Other <other@example.test>" }), from: "other@example.test", to: "subject@example.test" });
+    const count = await env.DB.prepare("SELECT count(*) AS count FROM tickets WHERE organization_id = ?").bind(workspace.organizationId).first<{ count: number }>();
+    expect(count?.count).toBe(2);
+  });
 });
 
 describe("system mail", () => {
@@ -95,12 +129,13 @@ describe("system mail", () => {
   });
 });
 
-function mimeMessage(input: { id: string; to: string; subject: string; body: string }) {
+function mimeMessage(input: { id: string; to: string; subject: string; body: string; inReplyTo?: string; from?: string }) {
   return new TextEncoder().encode([
-    "From: Casey Customer <customer@example.test>",
+    `From: ${input.from ?? "Casey Customer <customer@example.test>"}`,
     `To: ${input.to}`,
     `Subject: ${input.subject}`,
     `Message-ID: ${input.id}`,
+    ...(input.inReplyTo ? [`In-Reply-To: ${input.inReplyTo}`] : []),
     "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=utf-8",
     "",

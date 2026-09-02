@@ -9,6 +9,7 @@ import type { AppBindings } from "../types";
 
 const maximumRawMailSize = 25 * 1024 * 1024;
 const maximumAttachmentSize = 15 * 1024 * 1024;
+const maximumThreadReferences = 20;
 const safeMailTypes = new Set(["application/pdf", "application/zip", "application/json", "text/plain", "text/csv", "image/jpeg", "image/png", "image/gif", "image/webp"]);
 
 type InboundPayload =
@@ -89,12 +90,25 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       customerId: existing.customerId,
     } : undefined;
 
-    // A visible ticket number is not an authentication mechanism. Replies only
-    // attach through a provider Message-ID and must match inbox and customer.
-    if (!ticket && mail.inReplyTo) {
+    // A visible ticket number is not an authentication mechanism. Replies attach
+    // through RFC message identifiers first, and the subject number is only a
+    // fallback; both paths must match the same inbox and the same customer.
+    // Long threads accumulate References; cap the identifiers so the statement
+    // stays inside D1's bound-parameter limit.
+    const references = [...new Set(mail.references)].slice(0, maximumThreadReferences);
+    if (!ticket && references.length) {
+      const placeholders = references.map(() => "?").join(",");
       ticket = await env.DB.prepare(
-        "SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = t.organization_id WHERE m.organization_id = ? AND m.provider_message_id = ? AND c.email = ? AND t.inbox_id = ? LIMIT 1",
-      ).bind(organizationId, mail.inReplyTo, mail.from.email, inbox.id).first<TicketReference>() ?? undefined;
+        `SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = t.organization_id WHERE m.organization_id = ? AND t.inbox_id = ? AND c.email = ? AND (m.rfc_message_id IN (${placeholders}) OR m.provider_message_id IN (${placeholders})) ORDER BY m.created_at DESC LIMIT 1`,
+      ).bind(organizationId, inbox.id, mail.from.email, ...references, ...references).first<TicketReference>() ?? undefined;
+    }
+    if (!ticket) {
+      const numberMatch = /\[#(\d{1,12})\]/.exec(mail.subject);
+      if (numberMatch) {
+        ticket = await env.DB.prepare(
+          "SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM tickets t JOIN customers c ON c.id = t.customer_id AND c.organization_id = t.organization_id WHERE t.organization_id = ? AND t.inbox_id = ? AND t.number = ? AND c.email = ? LIMIT 1",
+        ).bind(organizationId, inbox.id, Number(numberMatch[1]), mail.from.email).first<TicketReference>() ?? undefined;
+      }
     }
 
     if (!ticket) {
@@ -130,11 +144,12 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
         bodyText: mail.text,
         normalizedSearch: normalizeSearch(mail.text),
         providerMessageId: mail.providerMessageId,
+        rfcMessageId: mail.providerMessageId,
         deliveryStatus: "received",
         createdAt: now,
       });
       await env.DB.prepare(
-        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, updated_at = ?, last_reply_at = ?, last_customer_reply_at = ?, last_message_preview = ?, message_count = message_count + 1, version = version + 1 WHERE organization_id = ? AND id = ?",
+        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, waiting_since = NULL, updated_at = ?, last_reply_at = ?, last_customer_reply_at = ?, last_message_preview = ?, message_count = message_count + 1, version = version + 1 WHERE organization_id = ? AND id = ?",
       ).bind(now.getTime(), now.getTime(), now.getTime(), preview(mail.text), organizationId, ticket.id).run();
       await refreshTicketSearch(env.DB, organizationId, ticket.id);
     } else {
@@ -195,7 +210,7 @@ export async function processOutboundMail(env: AppBindings, payload: { jobId?: s
   await env.DB.prepare("UPDATE outbound_mail_jobs SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE id = ? AND status <> 'sent'").bind(now.getTime(), job.id).run();
   const db = createDb(env.DB);
   const row = await env.DB.prepare(
-    "SELECT m.body_text AS body, m.body_html AS html, m.delivery_status AS status, c.email AS customerEmail, t.subject, t.number, o.slug AS organizationSlug, coalesce(i.email_address, o.support_email) AS supportEmail FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = m.organization_id JOIN organizations o ON o.id = m.organization_id LEFT JOIN inboxes i ON i.id = t.inbox_id AND i.organization_id = t.organization_id WHERE m.organization_id = ? AND m.id = ? LIMIT 1",
+    "SELECT m.body_text AS body, m.body_html AS html, m.delivery_status AS status, m.rfc_message_id AS rfcMessageId, c.email AS customerEmail, t.id AS ticketId, t.subject, t.number, o.slug AS organizationSlug, i.email_address AS inboxAddress, coalesce(i.email_address, o.support_email) AS supportEmail FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = m.organization_id JOIN organizations o ON o.id = m.organization_id LEFT JOIN inboxes i ON i.id = t.inbox_id AND i.organization_id = t.organization_id WHERE m.organization_id = ? AND m.id = ? LIMIT 1",
   ).bind(job.organizationId, job.messageId).first<OutboundRow>();
   if (!row || row.status === "sent") {
     await db.update(outboundMailJobs).set({ status: "sent", sentAt: now, updatedAt: now }).where(eq(outboundMailJobs.id, job.id));
@@ -204,12 +219,21 @@ export async function processOutboundMail(env: AppBindings, payload: { jobId?: s
   try {
     const provider = selectOutgoingProvider(env, job.organizationId);
     if (!provider) throw new Error("No outgoing mail provider is configured.");
+    if (!row.supportEmail) throw new Error("No support inbox is configured. Add one in Settings \u2192 Support inboxes.");
+    const domain = row.supportEmail.split("@")[1] ?? "resolvehq.local";
+    const rfcMessageId = row.rfcMessageId ?? `<${job.messageId}@${domain}>`;
+    if (!row.rfcMessageId) await env.DB.prepare("UPDATE messages SET rfc_message_id = ? WHERE organization_id = ? AND id = ?").bind(rfcMessageId, job.organizationId, job.messageId).run();
+    const lastCustomer = await env.DB.prepare(
+      "SELECT coalesce(rfc_message_id, provider_message_id) AS ref FROM messages WHERE organization_id = ? AND ticket_id = ? AND author_type = 'customer' AND coalesce(rfc_message_id, provider_message_id) IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+    ).bind(job.organizationId, row.ticketId).first<{ ref: string }>();
     const result = await provider.send({
-      from: row.supportEmail || `support@${row.organizationSlug}.invalid`,
+      from: row.supportEmail,
       to: row.customerEmail,
       subject: `[#${row.number}] ${row.subject}`,
       text: row.body,
       html: row.html,
+      messageId: rfcMessageId,
+      references: lastCustomer?.ref ? [lastCustomer.ref] : undefined,
     }, { idempotencyKey: job.idempotencyKey });
     await db.batch([
       db.update(messages).set({ deliveryStatus: "sent", providerMessageId: result.providerMessageId }).where(and(eq(messages.organizationId, job.organizationId), eq(messages.id, job.messageId))),
@@ -224,6 +248,7 @@ export async function processOutboundMail(env: AppBindings, payload: { jobId?: s
       nextAttemptAt: new Date(Date.now() + delay * 1000),
       updatedAt: new Date(),
     }).where(eq(outboundMailJobs.id, job.id));
+    await db.update(messages).set({ deliveryStatus: "failed" }).where(and(eq(messages.organizationId, job.organizationId), eq(messages.id, job.messageId)));
     throw error;
   }
 }
@@ -231,7 +256,7 @@ export async function processOutboundMail(env: AppBindings, payload: { jobId?: s
 interface ExistingMessage { messageId: string; ticketId: string; number: number; subject: string; customerId: string }
 interface TicketReference { id: string; number: number; subject: string; customerId: string }
 interface JobRow { id: string; organizationId: string; messageId: string; idempotencyKey: string; status: string; attempts: number }
-interface OutboundRow { body: string; html?: string; status: string; customerEmail: string; subject: string; number: number; organizationSlug: string; supportEmail?: string }
+interface OutboundRow { body: string; html?: string; status: string; rfcMessageId?: string; customerEmail: string; ticketId: string; subject: string; number: number; organizationSlug: string; inboxAddress?: string; supportEmail?: string }
 
 async function resolveInbox(database: D1Database, recipient: string) {
   const existing = await database.prepare("SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? AND disabled_at IS NULL LIMIT 1").bind(recipient).first<{ id: string; organizationId: string }>();
