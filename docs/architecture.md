@@ -21,6 +21,7 @@ Cron ───────────> outbox reconciliation, expired sessions/
 - Object storage keys include opaque organization and attachment identifiers, but object-key structure is not authorization. Downloads re-check the attachment row and organization membership.
 - Browser input is validated with Zod. Drizzle parameterizes database operations. Agent replies with rich formatting are sanitized server-side (`src/server/lib/sanitize-html.ts`, `sanitizeHtml`) against an allowlist (`p`, `br`, `strong`, `b`, `em`, `i`, `u`, `ul`, `ol`, `li`, and `a` with an `http(s)`/`mailto` `href`; every other tag, attribute, and script/style body is stripped) before being stored in `messages.body_html` and rendered as HTML. Inbound customer email is never treated as HTML; it is stored and rendered as plain text only.
 - Mutating cookie-authenticated requests require same-origin validation and a matching CSRF token.
+- `APP_URL` is optional; when unset the request origin is used for CSRF validation and outbound links.
 
 ## Modules
 

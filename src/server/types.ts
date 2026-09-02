@@ -4,9 +4,13 @@ export interface AppBindings {
   ASSETS: Fetcher;
   INBOUND_MAIL_QUEUE: Queue<MailQueueMessage>;
   OUTBOUND_MAIL_QUEUE: Queue<MailQueueMessage>;
+  /** Dead-letter queues. Declared as producers so one-click deploys provision them; nothing consumes them yet. */
+  INBOUND_MAIL_DLQ?: Queue<MailQueueMessage>;
+  OUTBOUND_MAIL_DLQ?: Queue<MailQueueMessage>;
   AUTH_RATE_LIMIT: RateLimit;
   WRITE_RATE_LIMIT: RateLimit;
-  APP_URL: string;
+  /** Optional public origin. When unset, the request origin is used (see lib/app-url.ts). */
+  APP_URL?: string;
   SESSION_PEPPER: string;
   DEV_MAIL_MODE: "capture" | "disabled";
   RESEND_API_KEY?: string;

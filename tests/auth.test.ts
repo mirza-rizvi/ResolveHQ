@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:test";
+import app from "resolve-server/app";
 import { hashPassword, verifyPassword } from "resolve-server/auth/password";
+import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { login, request, signup } from "./helpers";
 
 describe("authentication", () => {
@@ -261,5 +263,36 @@ describe("authentication", () => {
     expect(
       await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(`owner-${suffix}-2@example.test`).first(),
     ).toBeNull();
+  });
+
+  it("falls back to the request origin when APP_URL is not configured", async () => {
+    const workspace = await signup("no-app-url");
+    const unsetEnv = { ...env, APP_URL: undefined } as unknown as typeof env;
+    const withOrigin = (origin: string) =>
+      app.request(
+        "http://localhost:8787/api/organization/settings",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ name: "Origin Test" }),
+          headers: {
+            "content-type": "application/json",
+            cookie: workspace.cookie,
+            "x-csrf-token": workspace.csrf,
+            origin,
+          },
+        },
+        unsetEnv,
+      );
+    expect((await withOrigin("http://localhost:8787")).status).toBe(200);
+    const rejected = await withOrigin("https://evil.example");
+    expect(rejected.status).toBe(403);
+    expect(((await rejected.json()) as { error: { code: string } }).error.code).toBe("invalid_origin");
+
+    expect(resolveAppUrl({ APP_URL: "https://help.example.com/" }, new Request("http://ignored.test/x"))).toBe(
+      "https://help.example.com",
+    );
+    expect(resolveAppUrl({ APP_URL: undefined }, new Request("https://resolvehq.acme.workers.dev/api/x"))).toBe(
+      "https://resolvehq.acme.workers.dev",
+    );
   });
 });

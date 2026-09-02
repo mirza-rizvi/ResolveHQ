@@ -3,6 +3,7 @@ import { getCookie, setCookie } from "hono/cookie";
 import type { Context } from "hono";
 import { createDb } from "resolve-server/db";
 import { organizationMemberships, organizations, sessions, users } from "resolve-server/db/schema";
+import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
 import type { HonoEnv, Role, TenantContext } from "resolve-server/types";
@@ -29,7 +30,7 @@ export async function createSession(context: Context<HonoEnv>, userId: string, o
     lastSeenAt: now,
   });
 
-  const secure = context.env.APP_URL.startsWith("https://");
+  const secure = resolveAppUrl(context.env, context.req.raw).startsWith("https://");
   setCookie(context, SESSION_COOKIE, token, {
     httpOnly: true,
     secure,
@@ -105,7 +106,7 @@ export async function resolveTenant(context: Context<HonoEnv>): Promise<TenantCo
 }
 
 export function clearSessionCookies(context: Context<HonoEnv>) {
-  const secure = context.env.APP_URL.startsWith("https://");
+  const secure = resolveAppUrl(context.env, context.req.raw).startsWith("https://");
   setCookie(context, SESSION_COOKIE, "", { httpOnly: true, secure, sameSite: "Lax", path: "/", maxAge: 0 });
   setCookie(context, CSRF_COOKIE, "", { httpOnly: false, secure, sameSite: "Lax", path: "/", maxAge: 0 });
 }

@@ -11,6 +11,7 @@
     "resolve-server/db/schema": "./src/server/db/schema.ts",
     "resolve-server/http/errors": "./src/server/http/errors.ts",
     "resolve-server/http/validate": "./src/server/http/validate.ts",
+    "resolve-server/lib/app-url": "./src/server/lib/app-url.ts",
     "resolve-server/lib/crypto": "./src/server/lib/crypto.ts",
     "resolve-server/lib/id": "./src/server/lib/id.ts",
     "resolve-server/lib/sanitize-html": "./src/server/lib/sanitize-html.ts",
@@ -32,11 +33,11 @@
   },
   "observability": { "enabled": true },
   "upload_source_maps": true,
+  "keep_vars": true,
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "resolvehq",
-      "database_id": "replace-with-production-d1-id",
       "migrations_dir": "drizzle/migrations"
     }
   ],
@@ -46,7 +47,9 @@
   "queues": {
     "producers": [
       { "binding": "INBOUND_MAIL_QUEUE", "queue": "resolvehq-inbound-mail" },
-      { "binding": "OUTBOUND_MAIL_QUEUE", "queue": "resolvehq-outbound-mail" }
+      { "binding": "OUTBOUND_MAIL_QUEUE", "queue": "resolvehq-outbound-mail" },
+      { "binding": "INBOUND_MAIL_DLQ", "queue": "resolvehq-inbound-mail-dlq" },
+      { "binding": "OUTBOUND_MAIL_DLQ", "queue": "resolvehq-outbound-mail-dlq" }
     ],
     "consumers": [
       { "queue": "resolvehq-inbound-mail", "max_batch_size": 5, "max_retries": 5, "dead_letter_queue": "resolvehq-inbound-mail-dlq" },
@@ -66,5 +69,5 @@
     }
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
-  "vars": { "APP_URL": "http://localhost:5173", "DEV_MAIL_MODE": "capture" }
+  "vars": { "DEV_MAIL_MODE": "disabled" }
 }

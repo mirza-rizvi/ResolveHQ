@@ -3,6 +3,7 @@ import { getCookie } from "hono/cookie";
 import { roleRank, type MemberRole } from "resolve-shared/domain";
 import { constantTimeEqual } from "resolve-server/lib/crypto";
 import { HttpError } from "resolve-server/http/errors";
+import { resolveAppUrl } from "resolve-server/lib/app-url";
 import type { HonoEnv } from "resolve-server/types";
 import { CSRF_COOKIE, resolveTenant } from "./session";
 
@@ -10,7 +11,7 @@ const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function assertMutationOrigin(context: Context<HonoEnv>): void {
   if (safeMethods.has(context.req.method)) return;
-  const expectedOrigin = new URL(context.env.APP_URL).origin;
+  const expectedOrigin = new URL(resolveAppUrl(context.env, context.req.raw)).origin;
   const origin = context.req.header("origin");
   if (!origin || origin !== expectedOrigin)
     throw new HttpError(403, "invalid_origin", "The request origin is not allowed.");

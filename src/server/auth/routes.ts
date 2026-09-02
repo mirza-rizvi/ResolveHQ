@@ -14,6 +14,7 @@ import {
 } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
+import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { newId } from "resolve-server/lib/id";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { sendSystemMail } from "resolve-server/mail/system";
@@ -78,14 +79,12 @@ authRoutes.post("/signup", validate("json", signupInput), async (context) => {
     name: input.name,
     passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER),
   });
-  const insertOrganization = db
-    .insert(organizations)
-    .values({
-      id: organizationId,
-      name: input.organizationName,
-      slug: input.organizationSlug,
-      supportEmail: input.supportEmail,
-    });
+  const insertOrganization = db.insert(organizations).values({
+    id: organizationId,
+    name: input.organizationName,
+    slug: input.organizationSlug,
+    supportEmail: input.supportEmail,
+  });
   const insertMembership = db
     .insert(organizationMemberships)
     .values({ organizationId, userId, role: "owner", createdAt: now });
@@ -95,16 +94,14 @@ authRoutes.post("/signup", validate("json", signupInput), async (context) => {
         insertUser,
         insertOrganization,
         insertMembership,
-        db
-          .insert(inboxes)
-          .values({
-            id: newId("inb"),
-            organizationId,
-            name: "Support",
-            emailAddress: input.supportEmail,
-            provider: "cloudflare_email",
-            isDefault: true,
-          }),
+        db.insert(inboxes).values({
+          id: newId("inb"),
+          organizationId,
+          name: "Support",
+          emailAddress: input.supportEmail,
+          provider: "cloudflare_email",
+          isDefault: true,
+        }),
       ]);
     } else {
       await db.batch([insertUser, insertOrganization, insertMembership]);
@@ -244,14 +241,12 @@ authRoutes.post(
     const userId = newId("usr");
     const now = new Date();
     await db.batch([
-      db
-        .insert(users)
-        .values({
-          id: userId,
-          email: invitation.email,
-          name: input.name,
-          passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER),
-        }),
+      db.insert(users).values({
+        id: userId,
+        email: invitation.email,
+        name: input.name,
+        passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER),
+      }),
       db
         .insert(organizationMemberships)
         .values({ organizationId: invitation.organizationId, userId, role: invitation.role, createdAt: now }),
@@ -299,22 +294,25 @@ authRoutes.post(
       .where(and(eq(users.email, email), isNull(users.disabledAt)))
       .limit(1);
     if (user) {
+      const appUrl = resolveAppUrl(context.env, context.req.raw);
       const work = (async () => {
         try {
           const token = randomToken();
-          await db
-            .insert(passwordResetTokens)
-            .values({
-              id: newId("prt"),
-              userId: user.id,
-              tokenHash: await sha256(`${token}.${context.env.SESSION_PEPPER}`),
-              expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-            });
-          await sendSystemMail(context.env, {
-            to: email,
-            subject: "Reset your ResolveHQ password",
-            text: `Hi ${user.name},\n\nReset your password within 30 minutes:\n${context.env.APP_URL}/reset-password?token=${encodeURIComponent(token)}\n\nIf you did not request this, ignore this email.`,
+          await db.insert(passwordResetTokens).values({
+            id: newId("prt"),
+            userId: user.id,
+            tokenHash: await sha256(`${token}.${context.env.SESSION_PEPPER}`),
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000),
           });
+          await sendSystemMail(
+            context.env,
+            {
+              to: email,
+              subject: "Reset your ResolveHQ password",
+              text: `Hi ${user.name},\n\nReset your password within 30 minutes:\n${appUrl}/reset-password?token=${encodeURIComponent(token)}\n\nIf you did not request this, ignore this email.`,
+            },
+            appUrl,
+          );
         } catch (error) {
           console.error("Password reset work failed", error);
         }

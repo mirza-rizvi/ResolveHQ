@@ -1,6 +1,18 @@
-APP_URL=http://localhost:5173
+# Required. At least 32 random characters; used to pepper password and token hashes.
 SESSION_PEPPER=replace-with-at-least-32-random-characters
+
+# Local development only. Vite serves the app on 5173 and proxies /api to the Worker on 8787,
+# so the Worker must be told the browser's origin. In production APP_URL is optional: the
+# Worker uses the request origin for CSRF checks, cookie security, and links in emails.
+APP_URL=http://localhost:5173
+
+# "capture" records every outgoing email in the mail_captures table (viewable in Settings)
+# instead of sending it. Production defaults to "disabled" via wrangler.jsonc.
 DEV_MAIL_MODE=capture
+
+# Optional. Required to actually send email (ticket replies, password resets, invitations).
 # RESEND_API_KEY=re_...
 # RESEND_WEBHOOK_SECRET=whsec_...
-SYSTEM_MAIL_FROM=no-reply@example.test
+
+# Optional. Sender for system mail; defaults to no-reply@<your app host>.
+# SYSTEM_MAIL_FROM=no-reply@example.com

@@ -10,6 +10,7 @@ import {
   users,
 } from "resolve-server/db/schema";
 import { requireAuth, requireRole } from "resolve-server/auth/middleware";
+import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
 import { sendSystemMail } from "resolve-server/mail/system";
@@ -113,15 +114,13 @@ organizationRoutes.post(
     const input = context.req.valid("json");
     const id = newId("inb");
     try {
-      await createDb(context.env.DB)
-        .insert(inboxes)
-        .values({
-          id,
-          organizationId: tenant.organizationId,
-          name: input.name,
-          emailAddress: input.emailAddress,
-          provider: "cloudflare_email",
-        });
+      await createDb(context.env.DB).insert(inboxes).values({
+        id,
+        organizationId: tenant.organizationId,
+        name: input.name,
+        emailAddress: input.emailAddress,
+        provider: "cloudflare_email",
+      });
     } catch (error) {
       if (String(error).includes("UNIQUE"))
         throw new HttpError(409, "inbox_address_exists", "That inbox address is already in use.");
@@ -181,7 +180,8 @@ organizationRoutes.post("/invitations", requireRole("admin"), validate("json", i
     invitedByUserId: tenant.userId,
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   });
-  const inviteUrl = `${context.env.APP_URL}/accept-invite?token=${encodeURIComponent(token)}`;
+  const appUrl = resolveAppUrl(context.env, context.req.raw);
+  const inviteUrl = `${appUrl}/accept-invite?token=${encodeURIComponent(token)}`;
   const [workspace] = await db
     .select({ name: organizations.name })
     .from(organizations)
@@ -189,11 +189,15 @@ organizationRoutes.post("/invitations", requireRole("admin"), validate("json", i
     .limit(1);
   const workspaceName = workspace?.name ?? "ResolveHQ";
   try {
-    await sendSystemMail(context.env, {
-      to: input.email,
-      subject: `You're invited to ${workspaceName} on ResolveHQ`,
-      text: `Join the ${workspaceName} support workspace:\n${inviteUrl}\n\nThis link expires in 7 days.`,
-    });
+    await sendSystemMail(
+      context.env,
+      {
+        to: input.email,
+        subject: `You're invited to ${workspaceName} on ResolveHQ`,
+        text: `Join the ${workspaceName} support workspace:\n${inviteUrl}\n\nThis link expires in 7 days.`,
+      },
+      appUrl,
+    );
   } catch (error) {
     console.error("Invitation mail failed", error);
   }
