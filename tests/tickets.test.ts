@@ -93,4 +93,16 @@ describe("tenant ticket workflow", () => {
     const bumped = await env.DB.prepare("SELECT message_count AS messageCount FROM tickets WHERE id = ?").bind(ticket.id).first<{ messageCount: number }>();
     expect(bumped?.messageCount).toBe(2);
   });
+
+  it("sanitizes rich reply html and keeps internal notes text-only", async () => {
+    const workspace = await signup("rich-reply");
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "Rich", email: "rich@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "Rich", message: "Hello" }) }, workspace)).json() as { ticket: { id: string } }).ticket;
+    const html = "<p>Fixed <strong>now</strong><script>alert(1)</script></p>";
+    expect((await request(`/tickets/${ticket.id}/messages`, { method: "POST", body: JSON.stringify({ body: "Fixed now", kind: "message", bodyHtml: html }) }, workspace)).status).toBe(201);
+    expect((await request(`/tickets/${ticket.id}/messages`, { method: "POST", body: JSON.stringify({ body: "Internal", kind: "internal_note", bodyHtml: html }) }, workspace)).status).toBe(201);
+    const rows = await env.DB.prepare("SELECT kind, body_html AS bodyHtml FROM messages WHERE organization_id = ? AND ticket_id = ? ORDER BY created_at").bind(workspace.organizationId, ticket.id).all<{ kind: string; bodyHtml: string | null }>();
+    expect(rows.results.find((row) => row.kind === "message" && row.bodyHtml)?.bodyHtml).toBe("<p>Fixed <strong>now</strong></p>");
+    expect(rows.results.find((row) => row.kind === "internal_note")?.bodyHtml).toBeNull();
+  });
 });

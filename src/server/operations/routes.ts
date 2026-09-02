@@ -76,6 +76,7 @@ operationRoutes.get("/tickets/:ticketId/draft", async (context) => {
 
 operationRoutes.put("/tickets/:ticketId/draft", validate("json", draftInput), async (context) => {
   const tenant = context.get("tenant");
+  if (!(await context.env.AUTH_RATE_LIMIT.limit({ key: `drafts:${tenant.userId}` })).success) throw new HttpError(429, "rate_limited", "Slow down and try again in a moment.");
   const ticketId = context.req.param("ticketId");
   const input = context.req.valid("json");
   await assertTicket(context.env.DB, tenant.organizationId, ticketId);

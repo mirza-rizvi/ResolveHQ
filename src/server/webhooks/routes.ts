@@ -22,10 +22,12 @@ webhookRoutes.post("/resend", async (context) => {
   if (!inserted.meta.changes) return context.json({ ok: true, duplicate: true });
 
   if (["email.bounced", "email.failed", "email.complained"].includes(event.type)) {
-    await context.env.DB.prepare("UPDATE messages SET delivery_status = 'failed' WHERE provider_message_id = ?").bind(event.data.email_id).run();
+    // A provider message id is only unique within the tenant that sent it, so the
+    // update is scoped to the message the owning outbound job points at.
+    await context.env.DB.prepare("UPDATE messages SET delivery_status = ? WHERE id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ?) AND organization_id IN (SELECT organization_id FROM outbound_mail_jobs WHERE provider_message_id = ?)").bind("failed", event.data.email_id, event.data.email_id).run();
     await context.env.DB.prepare("UPDATE outbound_mail_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE provider_message_id = ?").bind(`Resend event: ${event.type}`, now, event.data.email_id).run();
   } else if (["email.sent", "email.delivered"].includes(event.type)) {
-    await context.env.DB.prepare("UPDATE messages SET delivery_status = 'sent' WHERE provider_message_id = ?").bind(event.data.email_id).run();
+    await context.env.DB.prepare("UPDATE messages SET delivery_status = ? WHERE id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ?) AND organization_id IN (SELECT organization_id FROM outbound_mail_jobs WHERE provider_message_id = ?)").bind("sent", event.data.email_id, event.data.email_id).run();
   }
   await context.env.DB.prepare("UPDATE provider_webhook_events SET processed_at = ? WHERE provider = 'resend' AND external_event_id = ?").bind(now, eventId).run();
   return context.json({ ok: true });
