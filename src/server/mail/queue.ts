@@ -93,9 +93,13 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
     // A visible ticket number is not an authentication mechanism. Replies attach
     // through RFC message identifiers first, and the subject number is only a
     // fallback; both paths must match the same inbox and the same customer.
-    // Long threads accumulate References; cap the identifiers so the statement
-    // stays inside D1's bound-parameter limit.
-    const references = [...new Set(mail.references)].slice(0, maximumThreadReferences);
+    // Long threads accumulate References oldest-first; cap the identifiers so
+    // the statement stays inside D1's bound-parameter limit while keeping the
+    // In-Reply-To parent and the most recent ancestors.
+    const uniqueReferences = [...new Set(mail.references)];
+    const references = uniqueReferences.length > maximumThreadReferences
+      ? [...new Set([uniqueReferences[0], ...uniqueReferences.slice(-(maximumThreadReferences - 1))])]
+      : uniqueReferences;
     if (!ticket && references.length) {
       const placeholders = references.map(() => "?").join(",");
       ticket = await env.DB.prepare(

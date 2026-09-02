@@ -92,7 +92,7 @@ export class PostalMimeIncomingProvider implements IncomingMailProvider {
       subject: (email.subject?.trim() || "Support request").slice(0, 240),
       text: text.slice(0, 100_000),
       inReplyTo: email.inReplyTo?.slice(0, 998),
-      references: [email.inReplyTo, ...(email.references ?? "").split(/\s+/)].filter((value): value is string => Boolean(value)).map((value) => value.trim().slice(0, 998)),
+      references: [email.inReplyTo, ...(email.references ?? "").split(/\s+/)].map((value) => value?.trim().slice(0, 998)).filter((value): value is string => Boolean(value)),
       attachments: email.attachments.map((attachment, index) => ({
         filename: attachment.filename || `attachment-${index + 1}`,
         contentType: attachment.mimeType || "application/octet-stream",

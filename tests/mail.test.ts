@@ -88,11 +88,51 @@ describe("mail queue workflow", () => {
     expect(JSON.parse(capture!.headers)["In-Reply-To"]).toBe("<first@example.test>");
     await request(`/tickets/${ticket!.id}`, { method: "PATCH", body: JSON.stringify({ status: "resolved" }) }, workspace);
 
-    await processInboundMail(env as AppBindings, { raw: mimeMessage({ id: "<second@example.test>", to: "thread@example.test", subject: "Re: [#1001] Login broken", body: "Still broken.", inReplyTo: sent!.rfc }), from: "customer@example.test", to: "thread@example.test" });
+    await processInboundMail(env as AppBindings, { raw: mimeMessage({ id: "<second@example.test>", to: "thread@example.test", subject: "Re: Login broken", body: "Still broken.", inReplyTo: sent!.rfc }), from: "customer@example.test", to: "thread@example.test" });
     const count = await env.DB.prepare("SELECT count(*) AS count FROM tickets WHERE organization_id = ?").bind(workspace.organizationId).first<{ count: number }>();
     expect(count?.count).toBe(1);
     const state = await env.DB.prepare("SELECT status, message_count AS messages FROM tickets WHERE id = ?").bind(ticket!.id).first<{ status: string; messages: number }>();
     expect(state).toMatchObject({ status: "open", messages: 3 });
+  });
+
+  it("threads a reply that carries only a multi-id References header", async () => {
+    const workspace = await signup("mail-references");
+    const { request } = await import("./helpers");
+    await request("/organization/inboxes", { method: "POST", body: JSON.stringify({ name: "Support", emailAddress: "references@example.test" }) }, workspace);
+    await processInboundMail(env as AppBindings, { raw: mimeMessage({ id: "<r1@example.test>", to: "references@example.test", subject: "Export fails", body: "The export button errors." }), from: "customer@example.test", to: "references@example.test" });
+    const ticket = await env.DB.prepare("SELECT id FROM tickets WHERE organization_id = ?").bind(workspace.organizationId).first<{ id: string }>();
+    const reply = await (await request(`/tickets/${ticket!.id}/messages`, { method: "POST", body: JSON.stringify({ body: "Looking into it.", kind: "message" }) }, workspace)).json() as { message: { id: string } };
+    const job = await env.DB.prepare("SELECT id FROM outbound_mail_jobs WHERE message_id = ?").bind(reply.message.id).first<{ id: string }>();
+    await processOutboundMail(env as AppBindings, { jobId: job!.id });
+    const sent = await env.DB.prepare("SELECT rfc_message_id AS rfc FROM messages WHERE id = ?").bind(reply.message.id).first<{ rfc: string }>();
+
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({ id: "<r2@example.test>", to: "references@example.test", subject: "Re: Export fails", body: "Still failing.", references: `<junk-a@elsewhere.test> <junk-b@elsewhere.test> ${sent!.rfc}` }),
+      from: "customer@example.test",
+      to: "references@example.test",
+    });
+
+    const count = await env.DB.prepare("SELECT count(*) AS count FROM tickets WHERE organization_id = ?").bind(workspace.organizationId).first<{ count: number }>();
+    expect(count?.count).toBe(1);
+    const state = await env.DB.prepare("SELECT message_count AS messages FROM tickets WHERE id = ?").bind(ticket!.id).first<{ messages: number }>();
+    expect(state?.messages).toBe(3);
+  });
+
+  it("fails the job and the message when no support address is configured", async () => {
+    const workspace = await signup("mail-no-inbox");
+    const { request } = await import("./helpers");
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "Nina", email: "nina@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "No inbox", message: "Original request" }) }, workspace)).json() as { ticket: { id: string } }).ticket;
+    const reply = await (await request(`/tickets/${ticket.id}/messages`, { method: "POST", body: JSON.stringify({ body: "Reply body", kind: "message" }) }, workspace)).json() as { message: { id: string } };
+    const job = await env.DB.prepare("SELECT id FROM outbound_mail_jobs WHERE message_id = ?").bind(reply.message.id).first<{ id: string }>();
+
+    await expect(processOutboundMail(env as AppBindings, { jobId: job!.id })).rejects.toThrow("No support inbox");
+
+    const jobState = await env.DB.prepare("SELECT status, last_error AS error FROM outbound_mail_jobs WHERE id = ?").bind(job!.id).first<{ status: string; error: string }>();
+    expect(jobState?.status).toBe("failed");
+    expect(jobState?.error).toContain("No support inbox");
+    const messageState = await env.DB.prepare("SELECT delivery_status AS status FROM messages WHERE id = ?").bind(reply.message.id).first<{ status: string }>();
+    expect(messageState?.status).toBe("failed");
   });
 
   it("falls back to the subject ticket number only for the same customer", async () => {
@@ -129,13 +169,14 @@ describe("system mail", () => {
   });
 });
 
-function mimeMessage(input: { id: string; to: string; subject: string; body: string; inReplyTo?: string; from?: string }) {
+function mimeMessage(input: { id: string; to: string; subject: string; body: string; inReplyTo?: string; references?: string; from?: string }) {
   return new TextEncoder().encode([
     `From: ${input.from ?? "Casey Customer <customer@example.test>"}`,
     `To: ${input.to}`,
     `Subject: ${input.subject}`,
     `Message-ID: ${input.id}`,
     ...(input.inReplyTo ? [`In-Reply-To: ${input.inReplyTo}`] : []),
+    ...(input.references ? [`References: ${input.references}`] : []),
     "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=utf-8",
     "",
