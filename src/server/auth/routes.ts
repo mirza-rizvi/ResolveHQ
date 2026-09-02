@@ -128,10 +128,13 @@ authRoutes.post("/forgot-password", validate("json", z.object({ email: z.string(
   const [user] = await db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.email, email), isNull(users.disabledAt))).limit(1);
   if (user) {
     const work = (async () => {
-      const token = randomToken();
-      await db.insert(passwordResetTokens).values({ id: newId("prt"), userId: user.id, tokenHash: await sha256(`${token}.${context.env.SESSION_PEPPER}`), expiresAt: new Date(Date.now() + 30 * 60 * 1000) });
-      try { await sendSystemMail(context.env, { to: email, subject: "Reset your ResolveHQ password", text: `Hi ${user.name},\n\nReset your password within 30 minutes:\n${context.env.APP_URL}/reset-password?token=${encodeURIComponent(token)}\n\nIf you did not request this, ignore this email.` }); }
-      catch (error) { console.error("Password reset mail failed", error); }
+      try {
+        const token = randomToken();
+        await db.insert(passwordResetTokens).values({ id: newId("prt"), userId: user.id, tokenHash: await sha256(`${token}.${context.env.SESSION_PEPPER}`), expiresAt: new Date(Date.now() + 30 * 60 * 1000) });
+        await sendSystemMail(context.env, { to: email, subject: "Reset your ResolveHQ password", text: `Hi ${user.name},\n\nReset your password within 30 minutes:\n${context.env.APP_URL}/reset-password?token=${encodeURIComponent(token)}\n\nIf you did not request this, ignore this email.` });
+      } catch (error) {
+        console.error("Password reset work failed", error);
+      }
     })();
     try {
       context.executionCtx.waitUntil(work);
