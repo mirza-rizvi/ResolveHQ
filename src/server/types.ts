@@ -10,6 +10,7 @@ export interface AppBindings {
   DEV_MAIL_MODE: "capture" | "disabled";
   RESEND_API_KEY?: string;
   RESEND_WEBHOOK_SECRET?: string;
+  SYSTEM_MAIL_FROM?: string;
 }
 
 export type MailQueueMessage =

@@ -3,7 +3,8 @@ import { createDb } from "../db";
 import { activityLogs, attachments, customers, inboundMailEvents, messages, outboundMailJobs, tickets } from "../db/schema";
 import { base64Url } from "../lib/crypto";
 import { newId, normalizeSearch } from "../lib/id";
-import { DevelopmentMailProvider, PostalMimeIncomingProvider, ResendMailProvider } from "../providers/mail";
+import { PostalMimeIncomingProvider } from "../providers/mail";
+import { selectOutgoingProvider } from "./system";
 import type { AppBindings } from "../types";
 
 const maximumRawMailSize = 25 * 1024 * 1024;
@@ -201,7 +202,7 @@ export async function processOutboundMail(env: AppBindings, payload: { jobId?: s
     return;
   }
   try {
-    const provider = env.RESEND_API_KEY ? new ResendMailProvider(env.RESEND_API_KEY) : env.DEV_MAIL_MODE === "capture" ? new DevelopmentMailProvider() : null;
+    const provider = selectOutgoingProvider(env, job.organizationId);
     if (!provider) throw new Error("No outgoing mail provider is configured.");
     const result = await provider.send({
       from: row.supportEmail || `support@${row.organizationSlug}.invalid`,

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { processInboundMail } from "resolve-server/mail/queue";
+import { processInboundMail, processOutboundMail } from "resolve-server/mail/queue";
 import type { AppBindings } from "resolve-server/types";
 import { signup } from "./helpers";
 
@@ -53,6 +53,23 @@ describe("mail queue workflow", () => {
 
     const count = await env.DB.prepare("SELECT count(*) AS count FROM tickets WHERE organization_id = ?").bind(workspace.organizationId).first<{ count: number }>();
     expect(count?.count).toBe(2);
+  });
+
+  it("captures outbound mail in development mode", async () => {
+    const workspace = await signup("mail-capture");
+    const { request } = await import("./helpers");
+    await request("/organization/inboxes", { method: "POST", body: JSON.stringify({ name: "Support", emailAddress: "capture@example.test" }) }, workspace);
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "Cap", email: "cap@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "Capture me", message: "Hello" }) }, workspace)).json() as { ticket: { id: string } }).ticket;
+    const reply = await (await request(`/tickets/${ticket.id}/messages`, { method: "POST", body: JSON.stringify({ body: "Reply body", kind: "message" }) }, workspace)).json() as { message: { id: string } };
+    const job = await env.DB.prepare("SELECT id FROM outbound_mail_jobs WHERE message_id = ?").bind(reply.message.id).first<{ id: string }>();
+    await processOutboundMail(env as AppBindings, { jobId: job!.id });
+    const capture = await env.DB.prepare("SELECT to_address AS \"to\", subject FROM mail_captures WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1").bind(workspace.organizationId).first<{ to: string; subject: string }>();
+    expect(capture?.to).toBe("cap@example.test");
+    expect(capture?.subject).toContain("Capture me");
+    const listed = await request("/operations/dev-mail", {}, workspace);
+    expect(listed.status).toBe(200);
+    expect(((await listed.json()) as { captures: unknown[] }).captures.length).toBeGreaterThan(0);
   });
 });
 

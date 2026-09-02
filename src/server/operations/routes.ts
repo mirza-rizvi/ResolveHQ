@@ -151,6 +151,16 @@ operationRoutes.post("/tickets/bulk", validate("json", z.object({ ticketIds: z.a
   return context.json({ updated });
 });
 
+operationRoutes.get("/dev-mail", requireRole("admin"), async (context) => {
+  if (context.env.DEV_MAIL_MODE !== "capture" || context.env.RESEND_API_KEY) throw new HttpError(404, "not_found", "Mail capture is not enabled.");
+  const tenant = context.get("tenant");
+  const me = await context.env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(tenant.userId).first<{ email: string }>();
+  const rows = await context.env.DB.prepare(
+    "SELECT id, to_address AS toAddress, from_address AS fromAddress, subject, text, html, headers, created_at AS createdAt FROM mail_captures WHERE organization_id = ? OR (organization_id IS NULL AND to_address = ?) ORDER BY created_at DESC LIMIT 50",
+  ).bind(tenant.organizationId, me?.email ?? "").all();
+  return context.json({ captures: rows.results.map((row) => ({ ...row, headers: JSON.parse(String(row.headers)) })) });
+});
+
 async function assertTicket(database: D1Database, organizationId: string, ticketId: string) {
   const ticket = await database.prepare("SELECT 1 FROM tickets WHERE organization_id = ? AND id = ?").bind(organizationId, ticketId).first();
   if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");

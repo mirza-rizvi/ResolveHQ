@@ -15,7 +15,8 @@ export interface OutgoingMail {
   subject: string;
   text: string;
   html?: string;
-  replyToMessageId?: string;
+  messageId?: string;
+  references?: string[];
 }
 
 export interface IncomingMailProvider {
@@ -27,11 +28,18 @@ export interface OutgoingMailProvider {
 }
 
 export class DevelopmentMailProvider implements OutgoingMailProvider {
-  readonly messages: OutgoingMail[] = [];
+  constructor(private readonly database: D1Database, private readonly organizationId: string | null = null) {}
 
   async send(message: OutgoingMail) {
-    this.messages.push(structuredClone(message));
-    return { providerMessageId: `dev_${crypto.randomUUID()}` };
+    const id = `dev_${crypto.randomUUID()}`;
+    const headers = {
+      ...(message.messageId ? { "Message-ID": message.messageId } : {}),
+      ...(message.references?.length ? { "In-Reply-To": message.references.at(-1)!, References: message.references.join(" ") } : {}),
+    };
+    await this.database.prepare(
+      "INSERT INTO mail_captures (id, organization_id, to_address, from_address, subject, text, html, headers, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(id, this.organizationId, message.to, message.from, message.subject, message.text, message.html ?? null, JSON.stringify(headers), Date.now()).run();
+    return { providerMessageId: id };
   }
 }
 
@@ -52,7 +60,14 @@ export class ResendMailProvider implements OutgoingMailProvider {
         subject: message.subject,
         text: message.text,
         ...(message.html ? { html: message.html } : {}),
-        ...(message.replyToMessageId ? { headers: { "In-Reply-To": message.replyToMessageId, References: message.replyToMessageId } } : {}),
+        ...(message.messageId || message.references?.length
+          ? {
+              headers: {
+                ...(message.messageId ? { "Message-ID": message.messageId } : {}),
+                ...(message.references?.length ? { "In-Reply-To": message.references.at(-1)!, References: message.references.join(" ") } : {}),
+              },
+            }
+          : {}),
       }),
     });
     const result = await response.json().catch(() => ({})) as { id?: string; message?: string };
