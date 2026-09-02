@@ -69,4 +69,15 @@ describe("authentication", () => {
     expect((await request("/auth/switch-workspace", { method: "POST", body: JSON.stringify({ organizationId: guest.organizationId }) }, guest)).status).toBe(200);
     expect(((await (await request("/auth/me", {}, guest)).json()) as { organization: { id: string } }).organization.id).toBe(guest.organizationId);
   });
+
+  it("rejects a signed-in accept-invitation without a CSRF token", async () => {
+    const host = await signup("invite-csrf-host");
+    const guest = await signup("invite-csrf-guest");
+    const invitation = await (await request("/organization/invitations", { method: "POST", body: JSON.stringify({ email: "owner-invite-csrf-guest@example.test", role: "agent" }) }, host)).json() as { invitation: { inviteUrl: string } };
+    const token = new URL(invitation.invitation.inviteUrl).searchParams.get("token")!;
+    const response = await request("/auth/accept-invitation", { method: "POST", body: JSON.stringify({ token }), headers: { cookie: guest.cookie, origin: env.APP_URL } });
+    expect(response.status).toBe(403);
+    const membership = await env.DB.prepare("SELECT * FROM organization_memberships WHERE organization_id = ? AND user_id = ?").bind(host.organizationId, guest.userId).first();
+    expect(membership).toBeNull();
+  });
 });

@@ -12,7 +12,7 @@ import { sendSystemMail } from "resolve-server/mail/system";
 import type { HonoEnv } from "resolve-server/types";
 import { hashPassword, verifyPassword } from "./password";
 import { clearSessionCookies, createSession, resolveTenant, SESSION_COOKIE } from "./session";
-import { requireAuth } from "./middleware";
+import { assertMutationOrigin, requireAuth } from "./middleware";
 
 const credentials = z.object({
   email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
@@ -110,7 +110,8 @@ authRoutes.post("/accept-invitation", validate("json", z.object({
 
   const tenant = await resolveTenant(context);
   if (tenant) {
-    const [me] = await db.select({ email: users.email, name: users.name }).from(users).where(eq(users.id, tenant.userId)).limit(1);
+    assertMutationOrigin(context);
+    const [me] = await db.select({ email: users.email }).from(users).where(eq(users.id, tenant.userId)).limit(1);
     if (!me || me.email !== invitation.email) throw new HttpError(409, "wrong_account", "This invitation was sent to a different email address. Sign out and try again.");
     const now = new Date();
     await db.batch([
@@ -119,13 +120,13 @@ authRoutes.post("/accept-invitation", validate("json", z.object({
       db.update(organizationInvitations).set({ acceptedAt: now }).where(eq(organizationInvitations.id, invitation.id)),
     ]);
     const token = getCookie(context, SESSION_COOKIE)!;
-    await db.update(sessions).set({ organizationId: invitation.organizationId, lastSeenAt: now }).where(eq(sessions.tokenHash, await sha256(`${token}.${context.env.SESSION_PEPPER}`)));
+    await db.update(sessions).set({ organizationId: invitation.organizationId, lastSeenAt: now }).where(and(eq(sessions.tokenHash, await sha256(`${token}.${context.env.SESSION_PEPPER}`)), eq(sessions.userId, tenant.userId)));
     return context.json({ ok: true, organizationId: invitation.organizationId, role: invitation.role });
   }
 
   const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, invitation.email)).limit(1);
   if (existing) throw new HttpError(409, "account_exists", "Sign in before accepting this invitation.");
-  if (!input.name || !input.password) throw new HttpError(400, "validation_error", "name: Required to create your account.");
+  if (!input.name || !input.password) throw new HttpError(400, "validation_error", "name and password are required to create your account.");
   const userId = newId("usr");
   const now = new Date();
   await db.batch([
