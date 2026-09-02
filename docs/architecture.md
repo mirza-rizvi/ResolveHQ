@@ -19,7 +19,7 @@ Cron ───────────> outbox reconciliation, expired sessions/
 - Every request creates a `TenantContext` containing organization, user, role, and request metadata.
 - Business repositories require `organizationId`; domain services never accept an unscoped database handle for tenant-owned reads.
 - Object storage keys include opaque organization and attachment identifiers, but object-key structure is not authorization. Downloads re-check the attachment row and organization membership.
-- Browser input is validated with Zod. Drizzle parameterizes database operations. HTML email is sanitized before display.
+- Browser input is validated with Zod. Drizzle parameterizes database operations. Agent replies with rich formatting are sanitized server-side (`src/server/lib/sanitize-html.ts`, `sanitizeHtml`) against an allowlist (`p`, `br`, `strong`, `b`, `em`, `i`, `u`, `ul`, `ol`, `li`, and `a` with an `http(s)`/`mailto` `href`; every other tag, attribute, and script/style body is stripped) before being stored in `messages.body_html` and rendered as HTML. Inbound customer email is never treated as HTML; it is stored and rendered as plain text only.
 - Mutating cookie-authenticated requests require same-origin validation and a matching CSRF token.
 
 ## Modules
@@ -38,6 +38,14 @@ Cron ───────────> outbox reconciliation, expired sessions/
 `StorageProvider` exposes validated object put/get/delete operations. The Cloudflare implementation uses R2; a future S3-compatible implementation can replace it without changing ticket services.
 
 `IncomingMailProvider` normalizes raw MIME into an inbound support message. The email handler first streams RFC822 to a randomized R2 staging key; Queues receive only the event ID and object key. The consumer resolves a globally unique inbox, de-duplicates provider message IDs, checkpoints attachment progress, and only links replies when `In-Reply-To` matches the same inbox and customer. Visible ticket numbers are never trusted for threading. `OutgoingMailProvider` sends a reply envelope and returns a provider message ID. The production Resend adapter uses deterministic idempotency keys; signed webhooks are replay-protected by `svix-id`.
+
+### Threading
+
+Every message carries two identifiers: `provider_message_id` (the outgoing mail provider's id, or the inbound `Message-ID` as received) and `rfc_message_id` (an RFC 5322 Message-ID, unique per organization). Sending a reply mints `<${messageId}@${inboxDomain}>`, stores it as `rfc_message_id`, and sends it as the `Message-ID` header, with `In-Reply-To`/`References` set to the ticket's most recent customer message. An inbound reply is matched to an existing ticket by checking its `In-Reply-To`/`References` candidates against `rfc_message_id` OR `provider_message_id` within the resolved inbox's organization, requiring the ticket's customer email to equal the sender. When no header match exists, a `[#<number>]` token in the subject is used as a fallback, again gated on the sender email matching the ticket's customer — a forged subject from a different sender opens a new ticket rather than attaching to someone else's.
+
+### Cron recovery
+
+The scheduled handler (`worker.ts`, every 5 minutes) does the following, in order: expires sessions and unaccepted invitations; recovers `outbound_mail_jobs` and `inbound_mail_events` stuck in `processing` for more than 10 minutes back to `failed` so normal retry paths pick them up; re-enqueues `inbound_mail_events` that failed with staging objects still present (up to 5 attempts, 24-hour window); inserts a fallback `outbound_mail_jobs` row for any `queued` agent message whose job insert never landed, after a 2-minute grace period; sends any `pending`/`failed` outbound job whose `next_attempt_at` has arrived; deletes `_mail-staging/*` R2 objects for `inbound_mail_events` that finished (`completed` or `failed`) more than 7 days ago; and deletes orphaned attachments (`message_id IS NULL`) older than 1 day, object first, then row.
 
 `AIProvider` exposes optional summarize, draft, classify, sentiment, similar-ticket, and tag suggestions. The default provider reports that AI is unavailable; core workflows never depend on it.
 

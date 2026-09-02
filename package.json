@@ -14,13 +14,14 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\" \"e2e/**/*.ts\"",
     "test": "vitest run",
     "test:web": "vitest run --config vitest.web.config.ts",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run db:reset:local && playwright test",
     "test:watch": "vitest",
     "cf-typegen": "wrangler types",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply resolvehq --local",
     "db:migrate:remote": "wrangler d1 migrations apply resolvehq --remote",
-    "db:seed:local": "wrangler d1 execute resolvehq --local --file=drizzle/seed.sql"
+    "db:seed:local": "wrangler d1 execute resolvehq --local --file=drizzle/seed.sql",
+    "db:reset:local": "bash scripts/db-reset-local.sh"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.3.0",

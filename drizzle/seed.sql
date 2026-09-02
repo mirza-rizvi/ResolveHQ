@@ -6,11 +6,10 @@ VALUES ('org_demo', 'Northstar Labs', 'northstar-labs', 'support@northstarlabs.t
 INSERT OR IGNORE INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at)
 VALUES ('inb_demo', 'org_demo', 'Support', 'support@northstarlabs.test', 'cloudflare_email', 1, 1788192000000, 1788192000000);
 
-INSERT INTO users (id, email, name, password_hash, created_at, updated_at)
+INSERT OR IGNORE INTO users (id, email, name, password_hash, created_at, updated_at)
 VALUES
   ('usr_owner', 'owner@northstarlabs.test', 'Maya Chen', 'pbkdf2-sha256$310000$5YVp6WPqIjWJg4XXdTp-hg$tBZNVDTyqpuZWFVeu3sjpTjVX-05QRkhCDw5HLI-Guk', 1788192000000, 1788192000000),
-  ('usr_agent', 'alex@northstarlabs.test', 'Alex Morgan', 'pbkdf2-sha256$310000$5YVp6WPqIjWJg4XXdTp-hg$tBZNVDTyqpuZWFVeu3sjpTjVX-05QRkhCDw5HLI-Guk', 1788192000000, 1788192000000)
-ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash;
+  ('usr_agent', 'alex@northstarlabs.test', 'Alex Morgan', 'pbkdf2-sha256$310000$5YVp6WPqIjWJg4XXdTp-hg$tBZNVDTyqpuZWFVeu3sjpTjVX-05QRkhCDw5HLI-Guk', 1788192000000, 1788192000000);
 
 INSERT OR IGNORE INTO organization_memberships (organization_id, user_id, role, created_at)
 VALUES ('org_demo', 'usr_owner', 'owner', 1788192000000), ('org_demo', 'usr_agent', 'agent', 1788192000000);
