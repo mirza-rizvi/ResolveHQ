@@ -17,6 +17,13 @@ describe("api()", () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  it("does not dispatch unauthenticated for a 401 that is not an expired session", async () => {
+    const listener = vi.fn(); window.addEventListener("resolvehq:unauthenticated", listener);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { code: "invalid_credentials", message: "Your current password is incorrect." } }), { status: 401 })));
+    await expect(api("/auth/change-password", { method: "POST" })).rejects.toMatchObject({ status: 401, code: "invalid_credentials" });
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it("falls back to a generic code and message when the body is not the error envelope", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>gateway</html>", { status: 502 })));
     await expect(api("/tickets")).rejects.toMatchObject({ status: 502, code: "request_failed", message: "The request could not be completed." });

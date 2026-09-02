@@ -56,7 +56,11 @@ authRoutes.post("/signup", validate("json", signupInput), async (context) => {
       await db.batch([insertUser, insertOrganization, insertMembership]);
     }
   } catch (error) {
-    if (String(error).includes("UNIQUE")) throw new HttpError(409, "inbox_address_exists", "That inbox address is already in use.");
+    const failure = String(error);
+    if (failure.includes("UNIQUE")) {
+      if (input.supportEmail && (failure.includes("inboxes") || failure.includes("email_address"))) throw new HttpError(409, "inbox_address_exists", "That inbox address is already in use.");
+      throw new HttpError(409, "account_exists", "That email or workspace URL is already in use.");
+    }
     throw error;
   }
 

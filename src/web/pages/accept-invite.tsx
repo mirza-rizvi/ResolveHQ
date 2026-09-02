@@ -14,7 +14,7 @@ export function AcceptInvitePage() {
     catch (reason) { if (reason instanceof ApiError && reason.code === "wrong_account") setWrongAccount(true); setError(errorMessage(reason, "The invitation could not be accepted.")); }
     finally { setSubmitting(false); }
   }
-  async function signOut() { try { await logout(); } catch (reason) { setError(errorMessage(reason, "Sign out failed.")); } }
+  async function signOut() { setError(""); setWrongAccount(false); try { await logout(); } catch (reason) { setWrongAccount(true); setError(errorMessage(reason, "Sign out failed.")); } }
   async function acceptSignedOut(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!token) return; const data = new FormData(event.currentTarget); await send({ name: data.get("name"), password: data.get("password") }); }
   return <main className="auth-surface"><section className="auth-panel"><div className="auth-heading"><span>ResolveHQ</span><h1>Join the support team</h1><p>{session ? "Accept this invitation with the account you are signed in as." : "Create your agent account to open the shared inbox."}</p></div>
     {!token ? <p className="form-error">This invitation link is incomplete. Ask the workspace owner for a new link.</p> : session

@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { useAuth, type Session } from "@/web/auth";
 import { api, errorMessage } from "@/web/lib/api";
+import { safeNext } from "@/web/lib/next";
 import { Button, Input } from "@/web/components/ui";
 
 export function LoginPage() {
@@ -33,10 +34,6 @@ export function LoginPage() {
     </form>
     <p className="auth-switch">New workspace? <Link to="/signup">Create an account</Link></p>
   </AuthSurface>;
-}
-
-export function safeNext(value: string | null) {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/inbox";
 }
 
 export function AuthSurface({ children }: { children: React.ReactNode }) {

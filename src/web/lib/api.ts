@@ -21,8 +21,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, { ...init, headers, credentials: "include" });
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as ApiErrorBody;
-    if (response.status === 401 && !silent401.some((prefix) => path.startsWith(prefix))) window.dispatchEvent(new CustomEvent("resolvehq:unauthenticated"));
-    throw new ApiError(response.status, body.error?.code ?? "request_failed", body.error?.message ?? "The request could not be completed.");
+    const code = body.error?.code ?? "request_failed";
+    if (response.status === 401 && code === "unauthenticated" && !silent401.some((prefix) => path.startsWith(prefix))) window.dispatchEvent(new CustomEvent("resolvehq:unauthenticated"));
+    throw new ApiError(response.status, code, body.error?.message ?? "The request could not be completed.");
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
