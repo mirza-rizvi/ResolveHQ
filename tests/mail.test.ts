@@ -1,9 +1,10 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { processInboundMail, processOutboundMail } from "resolve-server/mail/queue";
 import { sendSystemMail } from "resolve-server/mail/system";
 import type { AppBindings } from "resolve-server/types";
 import { signup } from "./helpers";
+import worker from "../worker";
 
 describe("mail queue workflow", () => {
   it("creates an isolated ticket from inbound email and de-duplicates provider messages", async () => {
@@ -168,6 +169,48 @@ describe("system mail", () => {
     await expect(
       sendSystemMail({ ...env, DEV_MAIL_MODE: "disabled" } as AppBindings, { to: "notify-unconfigured@example.test", subject: "No provider", text: "hello" }),
     ).rejects.toThrow("No outgoing mail provider is configured.");
+  });
+});
+
+describe("scheduled mail recovery", () => {
+  it("recovers stalled jobs, re-enqueues staged inbound email, and clears expired staging objects", async () => {
+    const workspace = await signup("mail-cron");
+    await env.DB.prepare("UPDATE organizations SET support_email = ? WHERE id = ?").bind("cron@example.test", workspace.organizationId).run();
+    const { request } = await import("./helpers");
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "Cron", email: "cron-customer@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "Stalled send", message: "Please reply." }) }, workspace);
+    const stale = Date.now() - 30 * 60 * 1000;
+    await env.DB.prepare("UPDATE outbound_mail_jobs SET status = 'processing', updated_at = ? WHERE organization_id = ?").bind(stale, workspace.organizationId).run();
+
+    const eventId = "ime_cron_recovery";
+    const stagingObjectKey = `_mail-staging/${eventId}.eml`;
+    await env.ATTACHMENTS.put(stagingObjectKey, mimeMessage({ id: "<cron@example.test>", to: "cron@example.test", subject: "Stalled inbound", body: "Recover me." }));
+    await env.DB.prepare("INSERT INTO inbound_mail_events (id, staging_object_key, status, attachment_cursor, attempts, created_at, updated_at) VALUES (?, ?, 'processing', 0, 1, ?, ?)").bind(eventId, stagingObjectKey, stale, stale).run();
+
+    const expiredKey = "_mail-staging/ime_cron_expired.eml";
+    await env.ATTACHMENTS.put(expiredKey, new TextEncoder().encode("stale staging payload"));
+    await env.DB.prepare("INSERT INTO inbound_mail_events (id, staging_object_key, status, attachment_cursor, attempts, created_at, updated_at) VALUES (?, ?, 'completed', 0, 1, ?, ?)")
+      .bind("ime_cron_expired", expiredKey, 0, Date.now() - 30 * 24 * 60 * 60 * 1000).run();
+
+    const context = createExecutionContext();
+    await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *", noRetry: () => undefined }, env as AppBindings, context);
+    await waitOnExecutionContext(context);
+
+    const job = await env.DB.prepare("SELECT status, last_error AS lastError FROM outbound_mail_jobs WHERE organization_id = ?").bind(workspace.organizationId).first<{ status: string; lastError: string }>();
+    expect(job?.status).toBe("failed");
+    expect(job?.lastError).toBe("Recovered from stalled processing");
+    const recovered = await env.DB.prepare("SELECT status FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ status: string }>();
+    expect(recovered?.status).toBe("failed");
+    expect(await env.ATTACHMENTS.head(expiredKey)).toBeNull();
+    expect(await env.ATTACHMENTS.head(stagingObjectKey)).not.toBeNull();
+
+    // The cron re-enqueue carries no envelope addresses, so processing must rely
+    // on the parsed headers alone and must not collide with the existing row.
+    await processInboundMail(env as AppBindings, { eventId, stagingObjectKey, from: "", to: "" });
+    const completed = await env.DB.prepare("SELECT status FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ status: string }>();
+    expect(completed?.status).toBe("completed");
+    const ticket = await env.DB.prepare("SELECT subject FROM tickets WHERE organization_id = ? AND subject = ?").bind(workspace.organizationId, "Stalled inbound").first<{ subject: string }>();
+    expect(ticket?.subject).toBe("Stalled inbound");
   });
 });
 

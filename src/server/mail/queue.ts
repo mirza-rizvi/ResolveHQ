@@ -4,6 +4,7 @@ import { activityLogs, attachments, customers, inboundMailEvents, messages, outb
 import { base64Url } from "../lib/crypto";
 import { newId, normalizeSearch } from "../lib/id";
 import { PostalMimeIncomingProvider } from "../providers/mail";
+import { refreshTicketSearch } from "../search/index";
 import { selectOutgoingProvider } from "./system";
 import type { AppBindings } from "../types";
 
@@ -13,8 +14,8 @@ const maximumThreadReferences = 20;
 const safeMailTypes = new Set(["application/pdf", "application/zip", "application/json", "text/plain", "text/csv", "image/jpeg", "image/png", "image/gif", "image/webp"]);
 
 type InboundPayload =
-  | { raw: ArrayBuffer; from: string; to: string }
-  | { eventId: string; stagingObjectKey: string; from: string; to: string };
+  | { raw: ArrayBuffer; from?: string; to?: string }
+  | { eventId: string; stagingObjectKey: string; from?: string; to?: string };
 
 export async function processInboundMail(env: AppBindings, payload: InboundPayload) {
   const staged = "stagingObjectKey" in payload;
@@ -37,7 +38,7 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
   const db = createDb(env.DB);
   try {
     const mail = await new PostalMimeIncomingProvider().parse(raw);
-    const recipient = (mail.to || payload.to).toLowerCase();
+    const recipient = (mail.to || payload.to || "").toLowerCase();
     const inbox = await resolveInbox(env.DB, recipient);
     if (!inbox) throw new Error(`No ResolveHQ inbox is configured for ${recipient}.`);
     const organizationId = inbox.organizationId;
@@ -60,7 +61,7 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       createdAt: now,
       updatedAt: now,
     }).onConflictDoUpdate({
-      target: inboundMailEvents.id,
+      target: staged ? inboundMailEvents.stagingObjectKey : inboundMailEvents.id,
       set: { inboxId: inbox.id, organizationId, providerMessageId: mail.providerMessageId, status: "processing", attempts, lastError: null, updatedAt: now },
     });
 
@@ -276,16 +277,6 @@ async function resolveInbox(database: D1Database, recipient: string) {
 async function nextAttempt(database: D1Database, eventId: string) {
   const row = await database.prepare("SELECT attempts FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ attempts: number }>();
   return (row?.attempts ?? 0) + 1;
-}
-
-async function refreshTicketSearch(database: D1Database, organizationId: string, ticketId: string) {
-  const content = await database.prepare(
-    "SELECT t.normalized_search || ' ' || coalesce((SELECT group_concat(m.normalized_search, ' ') FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id), '') || ' ' || coalesce((SELECT group_concat(g.name, ' ') FROM ticket_tags tt JOIN tags g ON g.id = tt.tag_id AND g.organization_id = tt.organization_id WHERE tt.organization_id = t.organization_id AND tt.ticket_id = t.id), '') AS content FROM tickets t WHERE t.organization_id = ? AND t.id = ?",
-  ).bind(organizationId, ticketId).first<{ content: string }>();
-  await database.batch([
-    database.prepare("DELETE FROM ticket_search WHERE organization_id = ? AND ticket_id = ?").bind(organizationId, ticketId),
-    database.prepare("INSERT INTO ticket_search (organization_id, ticket_id, content) VALUES (?, ?, ?)").bind(organizationId, ticketId, content?.content ?? ""),
-  ]);
 }
 
 async function logMailActivity(db: ReturnType<typeof createDb>, organizationId: string, ticketId: string, eventType: string, entityType: string, entityId: string, metadata: Record<string, unknown>) {

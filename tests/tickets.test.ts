@@ -76,4 +76,16 @@ describe("tenant ticket workflow", () => {
     expect(response.status).toBe(409);
     expect((await response.json() as { error: { code: string } }).error.code).toBe("no_inbox");
   });
+
+  it("treats concurrent submits with the same clientMessageId as one message", async () => {
+    const workspace = await signup("idempotent");
+    await request("/organization/inboxes", { method: "POST", body: JSON.stringify({ name: "Support", emailAddress: "idem@example.test" }) }, workspace);
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "I", email: "i@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "Idem", message: "x" }) }, workspace)).json() as { ticket: { id: string } }).ticket;
+    const body = JSON.stringify({ body: "same", kind: "message", clientMessageId: "client-message-0001" });
+    const responses = await Promise.all([1, 2, 3].map(() => request(`/tickets/${ticket.id}/messages`, { method: "POST", body }, workspace)));
+    expect(responses.every((response) => response.status === 201 || response.status === 200)).toBe(true);
+    const count = await env.DB.prepare("SELECT count(*) AS count FROM messages WHERE organization_id = ? AND client_message_id = ?").bind(workspace.organizationId, "client-message-0001").first<{ count: number }>();
+    expect(count?.count).toBe(1);
+  });
 });

@@ -7,6 +7,7 @@ import { customers, tickets } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import { newId, normalizeSearch } from "resolve-server/lib/id";
+import { refreshTicketSearch } from "resolve-server/search/index";
 import type { HonoEnv } from "resolve-server/types";
 
 const customerInput = z.object({
@@ -108,14 +109,6 @@ customerRoutes.patch("/:id", validate("json", customerInput.partial()), async (c
     updatedAt: new Date(),
   }).where(and(eq(customers.id, current.id), eq(customers.organizationId, tenant.organizationId)));
   const related = await db.select({ id: tickets.id }).from(tickets).where(and(eq(tickets.organizationId, tenant.organizationId), eq(tickets.customerId, current.id))).limit(50);
-  for (const ticket of related) await refreshCustomerTicketSearch(context.env.DB, tenant.organizationId, ticket.id);
+  for (const ticket of related) await refreshTicketSearch(context.env.DB, tenant.organizationId, ticket.id);
   return context.json({ customer: { ...current, ...input } });
 });
-
-async function refreshCustomerTicketSearch(database: D1Database, organizationId: string, ticketId: string) {
-  const row = await database.prepare("SELECT t.normalized_search || ' ' || c.normalized_search || ' ' || coalesce((SELECT group_concat(m.normalized_search, ' ') FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id), '') || ' ' || coalesce((SELECT group_concat(g.name, ' ') FROM ticket_tags tt JOIN tags g ON g.id = tt.tag_id AND g.organization_id = tt.organization_id WHERE tt.organization_id = t.organization_id AND tt.ticket_id = t.id), '') AS content FROM tickets t JOIN customers c ON c.id = t.customer_id AND c.organization_id = t.organization_id WHERE t.organization_id = ? AND t.id = ?").bind(organizationId, ticketId).first<{ content: string }>();
-  await database.batch([
-    database.prepare("DELETE FROM ticket_search WHERE organization_id = ? AND ticket_id = ?").bind(organizationId, ticketId),
-    database.prepare("INSERT INTO ticket_search (organization_id, ticket_id, content) VALUES (?, ?, ?)").bind(organizationId, ticketId, row?.content ?? ""),
-  ]);
-}

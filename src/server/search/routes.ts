@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
 import { customers, tickets } from "resolve-server/db/schema";
+import { toFtsQuery } from "resolve-server/search/index";
 import type { HonoEnv } from "resolve-server/types";
 
 export const searchRoutes = new Hono<HonoEnv>();
@@ -11,8 +12,8 @@ searchRoutes.get("/", async (context) => {
   const tenant = context.get("tenant");
   const query = context.req.query("q")?.trim().toLowerCase() ?? "";
   if (query.length < 2) return context.json({ results: [] });
-  const ftsQuery = query.split(/\s+/).map((term) => term.replace(/[^a-z0-9@._-]/gi, "")).filter(Boolean).slice(0, 8).map((term) => `"${term}"*`).join(" AND ");
-  if (!ftsQuery) return context.json({ results: [] });
+  const ftsQuery = toFtsQuery(query);
+  if (ftsQuery === null) return context.json({ results: [] });
   const db = createDb(context.env.DB);
   const rows = await db.select({
     id: tickets.id, number: tickets.number, subject: tickets.subject, status: tickets.status, priority: tickets.priority,

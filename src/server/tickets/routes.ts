@@ -8,7 +8,8 @@ import { attachments, customers, inboxes, messages, outboundMailJobs, tags, tick
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import { newId, normalizeSearch } from "resolve-server/lib/id";
-import { applyTicketUpdate, assertActiveMember, preview, refreshTicketSearch } from "resolve-server/tickets/service";
+import { refreshTicketSearch, toFtsQuery } from "resolve-server/search/index";
+import { applyTicketUpdate, assertActiveMember, preview } from "resolve-server/tickets/service";
 import type { HonoEnv } from "resolve-server/types";
 import { ticketPriorities, ticketStatuses } from "resolve-shared/domain";
 
@@ -46,6 +47,9 @@ ticketRoutes.get("/", async (context) => {
   const limit = Math.min(50, Math.max(1, Number(context.req.query("limit") ?? 30) || 30));
   const cursor = decodeCursor(context.req.query("cursor"));
   const ftsQuery = search ? toFtsQuery(search) : undefined;
+  // A query that sanitises down to nothing must not fall through to an
+  // unfiltered listing; answer with an empty page instead.
+  if (search && ftsQuery === null) return context.json({ tickets: [], items: [], nextCursor: null, hasMore: false });
   const db = createDb(context.env.DB);
   const rows = await db.select({
     id: tickets.id,
@@ -202,22 +206,32 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
   const db = createDb(context.env.DB);
   const [ticket] = await db.select({ id: tickets.id, customerId: tickets.customerId, status: tickets.status }).from(tickets).where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId))).limit(1);
   if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
-  if (input.clientMessageId) {
-    const existing = await db.select({ id: messages.id, createdAt: messages.createdAt }).from(messages).where(and(eq(messages.organizationId, tenant.organizationId), eq(messages.clientMessageId, input.clientMessageId))).limit(1).then((rows) => rows[0]);
-    if (existing) return context.json({ message: { id: existing.id, ticketId: ticket.id, createdAt: existing.createdAt }, duplicate: true }, 200);
-  }
   const id = newId("msg");
   const outboundJobId = newId("omj");
   const now = new Date();
   // An agent reply hands the conversation back to the customer; internal notes,
   // and tickets already waiting, resolved, or closed, keep the status they had.
   const handsOffToCustomer = input.kind === "message" && (ticket.status === "open" || ticket.status === "pending");
-  const insertMessage = db.insert(messages).values({ id, organizationId: tenant.organizationId, ticketId: ticket.id, authorType: "agent", authorUserId: tenant.userId, kind: input.kind, bodyText: input.body, normalizedSearch: normalizeSearch(input.body), clientMessageId: input.clientMessageId, deliveryStatus: input.kind === "message" ? "queued" : "received" });
+  const values: typeof messages.$inferInsert = { id, organizationId: tenant.organizationId, ticketId: ticket.id, authorType: "agent", authorUserId: tenant.userId, kind: input.kind, bodyText: input.body, normalizedSearch: normalizeSearch(input.body), clientMessageId: input.clientMessageId, deliveryStatus: input.kind === "message" ? "queued" : "received" };
+  // The unique (organization_id, client_message_id) index arbitrates duplicate
+  // submits instead of a read-then-write check, which two concurrent retries
+  // can both pass. That index is partial, and SQLite only matches a conflict
+  // target that repeats its predicate, so the clause stays untargeted; a freshly
+  // generated id with null provider and RFC identifiers can collide on nothing
+  // else. Only the request whose insert took effect goes on to bump the ticket
+  // and queue delivery; the losers report the message that won.
+  const inserted = await db.insert(messages).values(values).onConflictDoNothing();
+  if (input.clientMessageId && !inserted.meta.changes) {
+    const existing = await db.select({ id: messages.id, ticketId: messages.ticketId, authorType: messages.authorType, kind: messages.kind, bodyText: messages.bodyText, createdAt: messages.createdAt })
+      .from(messages).where(and(eq(messages.organizationId, tenant.organizationId), eq(messages.clientMessageId, input.clientMessageId))).limit(1).then((rows) => rows[0]);
+    if (!existing) throw new HttpError(409, "message_conflict", "The message could not be saved. Try again.");
+    return context.json({ message: existing, duplicate: true }, 200);
+  }
   const updateTicket = db.update(tickets).set({ updatedAt: now, lastReplyAt: input.kind === "message" ? now : undefined, lastAgentReplyAt: input.kind === "message" ? now : undefined, lastMessagePreview: preview(input.body), messageCount: sql`${tickets.messageCount} + 1`, version: sql`${tickets.version} + 1` }).where(and(eq(tickets.id, ticket.id), eq(tickets.organizationId, tenant.organizationId)));
   if (input.kind === "message") {
-    await db.batch([insertMessage, updateTicket, db.insert(outboundMailJobs).values({ id: outboundJobId, organizationId: tenant.organizationId, messageId: id, idempotencyKey: `message/${id}`, status: "pending", nextAttemptAt: now })]);
+    await db.batch([updateTicket, db.insert(outboundMailJobs).values({ id: outboundJobId, organizationId: tenant.organizationId, messageId: id, idempotencyKey: `message/${id}`, status: "pending", nextAttemptAt: now }).onConflictDoNothing()]);
   } else {
-    await db.batch([insertMessage, updateTicket]);
+    await db.batch([updateTicket]);
   }
   if (handsOffToCustomer) {
     await context.env.DB.prepare("UPDATE tickets SET status = 'waiting_customer', waiting_since = ? WHERE organization_id = ? AND id = ?").bind(now.getTime(), tenant.organizationId, ticket.id).run();
@@ -273,8 +287,4 @@ function decodeCursor(value?: string) {
     const decoded = JSON.parse(atob(value.replaceAll("-", "+").replaceAll("_", "/"))) as { updatedAt?: unknown; id?: unknown };
     return typeof decoded.updatedAt === "number" && typeof decoded.id === "string" ? { updatedAt: decoded.updatedAt, id: decoded.id } : undefined;
   } catch { return undefined; }
-}
-
-function toFtsQuery(value: string) {
-  return value.split(/\s+/).map((term) => term.replace(/[^a-z0-9@._-]/gi, "")).filter(Boolean).slice(0, 8).map((term) => `"${term.replaceAll('"', '""')}"*`).join(" AND ");
 }

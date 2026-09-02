@@ -41,7 +41,20 @@ export default {
       env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
       env.DB.prepare("DELETE FROM organization_invitations WHERE expires_at < ? AND accepted_at IS NULL").bind(now),
     ]);
+    // A worker that dies mid-delivery leaves rows parked in 'processing' with
+    // nothing left to move them. Anything untouched for ten minutes is treated
+    // as abandoned so the normal retry paths can pick it up again.
+    const stale = now - 10 * 60 * 1000;
+    await env.DB.prepare("UPDATE outbound_mail_jobs SET status = 'failed', next_attempt_at = ?, last_error = coalesce(last_error, 'Recovered from stalled processing') WHERE status = 'processing' AND updated_at < ?").bind(now, stale).run();
+    await env.DB.prepare("UPDATE inbound_mail_events SET status = 'failed', last_error = coalesce(last_error, 'Recovered from stalled processing') WHERE status = 'processing' AND updated_at < ?").bind(stale).run();
+    const stalledInbound = await env.DB.prepare("SELECT id, staging_object_key AS key FROM inbound_mail_events WHERE status = 'failed' AND attempts < 5 AND staging_object_key LIKE '_mail-staging/%' LIMIT 20").all<{ id: string; key: string }>();
+    for (const event of stalledInbound.results) await env.INBOUND_MAIL_QUEUE.send({ kind: "inbound-mail", eventId: event.id, stagingObjectKey: event.key, from: "", to: "" });
+
     const pending = await env.DB.prepare("SELECT id FROM outbound_mail_jobs WHERE status IN ('pending', 'failed') AND next_attempt_at <= ? ORDER BY next_attempt_at LIMIT 50").bind(now).all<{ id: string }>();
     await Promise.all(pending.results.map((job) => env.OUTBOUND_MAIL_QUEUE.send({ kind: "outbound-mail", jobId: job.id })));
+
+    // Staging objects outlive their event only until the retry window closes.
+    const expired = await env.DB.prepare("SELECT staging_object_key AS key FROM inbound_mail_events WHERE status IN ('completed','failed') AND updated_at < ? AND staging_object_key LIKE '_mail-staging/%' LIMIT 50").bind(now - 7 * 24 * 60 * 60 * 1000).all<{ key: string }>();
+    for (const row of expired.results) await env.ATTACHMENTS.delete(row.key);
   },
 } satisfies ExportedHandler<AppBindings, MailQueueMessage>;
