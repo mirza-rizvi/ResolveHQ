@@ -1,10 +1,12 @@
-import { Archive, Check, Clock3, Inbox as InboxIcon, UserRound, Users, type LucideIcon } from "lucide-react";
+import { Archive, Check, Clock3, Inbox as InboxIcon, Layers, PauseCircle, UserRound, Users, type LucideIcon } from "lucide-react";
 import type { QueueKey, SavedViewFilters } from "./types";
 
 export const queueStatuses = ["open", "pending", "waiting_customer", "resolved", "closed"] as const;
 
 export const queueNavigation: ReadonlyArray<{ key: QueueKey; label: string; icon: LucideIcon }> = [
+  { key: "all", label: "All", icon: Layers },
   { key: "open", label: "Open", icon: InboxIcon },
+  { key: "pending", label: "Pending", icon: PauseCircle },
   { key: "unassigned", label: "Unassigned", icon: Users },
   { key: "mine", label: "Mine", icon: UserRound },
   { key: "waiting_customer", label: "Waiting", icon: Clock3 },

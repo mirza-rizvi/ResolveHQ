@@ -5,6 +5,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/web/auth";
 import { useDialogFocus } from "@/web/hooks/use-dialog-focus";
 import { errorMessage } from "@/web/lib/api";
+import { chordPending, clearChord, startChord } from "@/web/lib/chord";
 import { useToast } from "./toast";
 import { Button } from "./ui";
 
@@ -28,7 +29,6 @@ export function AppShell() {
   const [commandQuery, setCommandQuery] = useState("");
   const [accountOpen, setAccountOpen] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
-  const chordStartedAt = useRef(0);
   const closeCommand = useCallback(() => setCommandOpen(false), []);
   const commandDialogRef = useDialogFocus(commandOpen, closeCommand);
 
@@ -42,11 +42,13 @@ export function AppShell() {
       if (event.key === "Escape") { setCommandOpen(false); setAccountOpen(false); return; }
       if (editing || event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
-      if (key === "g") { chordStartedAt.current = Date.now(); return; }
-      if (Date.now() - chordStartedAt.current < 1_000) {
+      // The chord lives in a module the inbox can read, so its own j/k/r
+      // shortcuts can stand aside for the second keystroke of `g <key>`.
+      if (key === "g") { startChord(); return; }
+      if (chordPending()) {
         const destination = navigation.find((item) => item.shortcut.toLowerCase() === key);
         if (destination) { event.preventDefault(); navigate(destination.href); }
-        chordStartedAt.current = 0;
+        clearChord();
       }
     };
     window.addEventListener("keydown", onKeyDown);
