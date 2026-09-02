@@ -77,6 +77,9 @@ app.onError((error, context) => {
   if (error instanceof HttpError) {
     return context.json({ error: { code: error.code, message: error.message, requestId: context.get("requestId") } }, error.status);
   }
+  if (error instanceof SyntaxError) {
+    return context.json({ error: { code: "invalid_json", message: "Request body must be valid JSON.", requestId: context.get("requestId") } }, 400);
+  }
   console.error("Unhandled request error", error);
   return context.json({ error: { code: "internal_error", message: "Something went wrong.", requestId: context.get("requestId") } }, 500);
 });

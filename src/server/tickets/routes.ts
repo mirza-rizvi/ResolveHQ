@@ -1,4 +1,3 @@
-import { zValidator } from "@hono/zod-validator";
 import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -7,6 +6,7 @@ import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
 import { attachments, customers, inboxes, messages, notifications, organizationMemberships, outboundMailJobs, tags, teams, ticketAssignments, ticketReadStates, ticketTags, tickets, users } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
+import { validate } from "resolve-server/http/validate";
 import { newId, normalizeSearch } from "resolve-server/lib/id";
 import type { HonoEnv } from "resolve-server/types";
 import { ticketPriorities, ticketStatuses } from "resolve-shared/domain";
@@ -92,7 +92,7 @@ ticketRoutes.get("/", async (context) => {
   return context.json({ tickets: enriched, items: enriched, nextCursor, hasMore });
 });
 
-ticketRoutes.post("/", zValidator("json", createTicketInput), async (context) => {
+ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const db = createDb(context.env.DB);
@@ -167,7 +167,7 @@ ticketRoutes.get("/:id", async (context) => {
   return context.json({ ticket, messages: thread, tags: tagRows, attachments: attachmentRows });
 });
 
-ticketRoutes.patch("/:id", zValidator("json", updateTicketInput), async (context) => {
+ticketRoutes.patch("/:id", validate("json", updateTicketInput), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   if (input.assignedUserId) await assertActiveMember(context.env.DB, tenant.organizationId, input.assignedUserId);
@@ -196,7 +196,7 @@ ticketRoutes.patch("/:id", zValidator("json", updateTicketInput), async (context
   return context.json({ ticket: { ...current, ...changes, version: current.version + 1, updatedAt: now } });
 });
 
-ticketRoutes.post("/:id/messages", zValidator("json", messageInput), async (context) => {
+ticketRoutes.post("/:id/messages", validate("json", messageInput), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const db = createDb(context.env.DB);
@@ -222,7 +222,7 @@ ticketRoutes.post("/:id/messages", zValidator("json", messageInput), async (cont
   return context.json({ message: { id, ticketId: ticket.id, authorType: "agent", kind: input.kind, bodyText: input.body, createdAt: now } }, 201);
 });
 
-ticketRoutes.post("/:id/tags", zValidator("json", z.object({ tagId: z.string().min(1) })), async (context) => {
+ticketRoutes.post("/:id/tags", validate("json", z.object({ tagId: z.string().min(1) })), async (context) => {
   const tenant = context.get("tenant");
   const tagId = context.req.valid("json").tagId;
   const db = createDb(context.env.DB);

@@ -1,4 +1,3 @@
-import { zValidator } from "@hono/zod-validator";
 import { and, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -8,6 +7,7 @@ import { requireAuth, requireRole } from "resolve-server/auth/middleware";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
 import { HttpError } from "resolve-server/http/errors";
+import { validate } from "resolve-server/http/validate";
 import type { HonoEnv } from "resolve-server/types";
 
 const inviteInput = z.object({
@@ -38,14 +38,14 @@ organizationRoutes.get("/settings", async (context) => {
   return context.json({ workspace, inboxes: inboxRows, mail: { resendConfigured: Boolean(context.env.RESEND_API_KEY), webhookConfigured: Boolean(context.env.RESEND_WEBHOOK_SECRET) } });
 });
 
-organizationRoutes.patch("/settings", requireRole("admin"), zValidator("json", z.object({ name: z.string().trim().min(2).max(120) })), async (context) => {
+organizationRoutes.patch("/settings", requireRole("admin"), validate("json", z.object({ name: z.string().trim().min(2).max(120) })), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   await createDb(context.env.DB).update(organizations).set({ name: input.name, updatedAt: new Date() }).where(eq(organizations.id, tenant.organizationId));
   return context.json({ workspace: { id: tenant.organizationId, name: input.name } });
 });
 
-organizationRoutes.post("/inboxes", requireRole("admin"), zValidator("json", z.object({ name: z.string().trim().min(1).max(80), emailAddress: z.string().trim().email().max(254).transform((value) => value.toLowerCase()) })), async (context) => {
+organizationRoutes.post("/inboxes", requireRole("admin"), validate("json", z.object({ name: z.string().trim().min(1).max(80), emailAddress: z.string().trim().email().max(254).transform((value) => value.toLowerCase()) })), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const id = newId("inb");
@@ -54,7 +54,7 @@ organizationRoutes.post("/inboxes", requireRole("admin"), zValidator("json", z.o
   return context.json({ inbox: { id, ...input, provider: "cloudflare_email" } }, 201);
 });
 
-organizationRoutes.patch("/inboxes/:id", requireRole("admin"), zValidator("json", z.object({ name: z.string().trim().min(1).max(80).optional(), disabled: z.boolean().optional() })), async (context) => {
+organizationRoutes.patch("/inboxes/:id", requireRole("admin"), validate("json", z.object({ name: z.string().trim().min(1).max(80).optional(), disabled: z.boolean().optional() })), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const result = await createDb(context.env.DB).update(inboxes).set({ name: input.name, disabledAt: input.disabled === undefined ? undefined : input.disabled ? new Date() : null, updatedAt: new Date() }).where(and(eq(inboxes.id, context.req.param("id")), eq(inboxes.organizationId, tenant.organizationId)));
@@ -62,7 +62,7 @@ organizationRoutes.patch("/inboxes/:id", requireRole("admin"), zValidator("json"
   return context.json({ ok: true });
 });
 
-organizationRoutes.post("/invitations", requireRole("admin"), zValidator("json", inviteInput), async (context) => {
+organizationRoutes.post("/invitations", requireRole("admin"), validate("json", inviteInput), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const db = createDb(context.env.DB);
@@ -92,7 +92,7 @@ organizationRoutes.post("/invitations", requireRole("admin"), zValidator("json",
   return context.json({ invitation: { id: invitationId, email: input.email, role: input.role, inviteUrl: `${context.env.APP_URL}/accept-invite?token=${encodeURIComponent(token)}` } }, 201);
 });
 
-organizationRoutes.patch("/members/:userId", requireRole("admin"), zValidator("json", z.object({ role: z.enum(["admin", "agent"]).optional(), disabled: z.boolean().optional() })), async (context) => {
+organizationRoutes.patch("/members/:userId", requireRole("admin"), validate("json", z.object({ role: z.enum(["admin", "agent"]).optional(), disabled: z.boolean().optional() })), async (context) => {
   const tenant = context.get("tenant");
   const targetUserId = context.req.param("userId");
   if (targetUserId === tenant.userId) throw new HttpError(409, "self_change", "You cannot change your own membership here.");

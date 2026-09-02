@@ -1,4 +1,3 @@
-import { zValidator } from "@hono/zod-validator";
 import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -6,6 +5,7 @@ import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
 import { tags } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
+import { validate } from "resolve-server/http/validate";
 import { newId } from "resolve-server/lib/id";
 import type { HonoEnv } from "resolve-server/types";
 
@@ -18,7 +18,7 @@ tagRoutes.get("/", async (context) => {
   const rows = await createDb(context.env.DB).select().from(tags).where(eq(tags.organizationId, tenant.organizationId)).orderBy(asc(tags.name));
   return context.json({ tags: rows });
 });
-tagRoutes.post("/", zValidator("json", tagInput), async (context) => {
+tagRoutes.post("/", validate("json", tagInput), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const id = newId("tag");

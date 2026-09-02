@@ -1,4 +1,3 @@
-import { zValidator } from "@hono/zod-validator";
 import { and, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
@@ -6,6 +5,7 @@ import { z } from "zod";
 import { createDb } from "resolve-server/db";
 import { organizationInvitations, organizationMemberships, organizations, sessions, users } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
+import { validate } from "resolve-server/http/validate";
 import { newId } from "resolve-server/lib/id";
 import { sha256 } from "resolve-server/lib/crypto";
 import type { HonoEnv } from "resolve-server/types";
@@ -26,7 +26,7 @@ const signupInput = credentials.extend({
 
 export const authRoutes = new Hono<HonoEnv>();
 
-authRoutes.post("/signup", zValidator("json", signupInput), async (context) => {
+authRoutes.post("/signup", validate("json", signupInput), async (context) => {
   const rate = await context.env.AUTH_RATE_LIMIT.limit({ key: `signup:${context.req.header("cf-connecting-ip") ?? "local"}` });
   if (!rate.success) throw new HttpError(429, "rate_limited", "Too many signup attempts. Try again shortly.");
 
@@ -54,7 +54,7 @@ authRoutes.post("/signup", zValidator("json", signupInput), async (context) => {
   return context.json({ user: { id: userId, email: input.email, name: input.name }, organization: { id: organizationId, name: input.organizationName, slug: input.organizationSlug }, role: "owner", csrfToken }, 201);
 });
 
-authRoutes.post("/login", zValidator("json", credentials), async (context) => {
+authRoutes.post("/login", validate("json", credentials), async (context) => {
   const ip = context.req.header("cf-connecting-ip") ?? "local";
   const input = context.req.valid("json");
   const rate = await context.env.AUTH_RATE_LIMIT.limit({ key: `login:${ip}:${input.email}` });
@@ -92,7 +92,7 @@ authRoutes.post("/login", zValidator("json", credentials), async (context) => {
   });
 });
 
-authRoutes.post("/accept-invitation", zValidator("json", z.object({
+authRoutes.post("/accept-invitation", validate("json", z.object({
   token: z.string().min(20).max(200),
   name: z.string().trim().min(2).max(100),
   password: z.string().min(12).max(128),
@@ -138,7 +138,7 @@ authRoutes.get("/me", requireAuth, async (context) => {
   });
 });
 
-authRoutes.post("/switch-workspace", requireAuth, zValidator("json", z.object({ organizationId: z.string().min(1) })), async (context) => {
+authRoutes.post("/switch-workspace", requireAuth, validate("json", z.object({ organizationId: z.string().min(1) })), async (context) => {
   const tenant = context.get("tenant");
   const organizationId = context.req.valid("json").organizationId;
   const membership = await createDb(context.env.DB).select({ id: organizations.id }).from(organizationMemberships).innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId)).where(and(eq(organizationMemberships.userId, tenant.userId), eq(organizationMemberships.organizationId, organizationId), isNull(organizationMemberships.disabledAt))).limit(1).then((rows) => rows[0]);

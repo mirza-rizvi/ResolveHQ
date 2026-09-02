@@ -184,6 +184,7 @@ export const messages = sqliteTable(
     normalizedSearch: text("normalized_search").notNull().default(""),
     providerMessageId: text("provider_message_id"),
     clientMessageId: text("client_message_id"),
+    rfcMessageId: text("rfc_message_id"),
     deliveryStatus: text("delivery_status", { enum: ["received", "queued", "sent", "failed"] }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
@@ -191,6 +192,7 @@ export const messages = sqliteTable(
     index("messages_organization_ticket_created_idx").on(table.organizationId, table.ticketId, table.createdAt),
     uniqueIndex("messages_organization_provider_uidx").on(table.organizationId, table.providerMessageId),
     uniqueIndex("messages_organization_client_uidx").on(table.organizationId, table.clientMessageId),
+    uniqueIndex("messages_organization_rfc_uidx").on(table.organizationId, table.rfcMessageId),
   ],
 );
 
@@ -377,7 +379,7 @@ export const attachments = sqliteTable(
     id: text("id").primaryKey(),
     organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
     ticketId: text("ticket_id").notNull().references(() => tickets.id, { onDelete: "cascade" }),
-    messageId: text("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    messageId: text("message_id").references(() => messages.id, { onDelete: "cascade" }),
     objectKey: text("object_key").notNull().unique(),
     filename: text("filename").notNull(),
     contentType: text("content_type").notNull(),
@@ -436,6 +438,38 @@ export const settings = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.key] })],
+);
+
+export const mailCaptures = sqliteTable(
+  "mail_captures",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").references(() => organizations.id, { onDelete: "cascade" }),
+    toAddress: text("to_address").notNull(),
+    fromAddress: text("from_address").notNull(),
+    subject: text("subject").notNull(),
+    text: text("text").notNull(),
+    html: text("html"),
+    headers: text("headers", { mode: "json" }).$type<Record<string, string>>().notNull().default({}),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("mail_captures_org_created_idx").on(table.organizationId, table.createdAt),
+    index("mail_captures_to_created_idx").on(table.toAddress, table.createdAt),
+  ],
+);
+
+export const passwordResetTokens = sqliteTable(
+  "password_reset_tokens",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    usedAt: integer("used_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("password_reset_tokens_user_idx").on(table.userId)],
 );
 
 export type Organization = typeof organizations.$inferSelect;

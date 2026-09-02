@@ -1,4 +1,3 @@
-import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, like, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -6,6 +5,7 @@ import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
 import { customers, tickets } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
+import { validate } from "resolve-server/http/validate";
 import { newId, normalizeSearch } from "resolve-server/lib/id";
 import type { HonoEnv } from "resolve-server/types";
 
@@ -54,7 +54,7 @@ customerRoutes.get("/", async (context) => {
   return context.json({ customers: items, items, nextCursor, hasMore });
 });
 
-customerRoutes.post("/", zValidator("json", customerInput), async (context) => {
+customerRoutes.post("/", validate("json", customerInput), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const id = newId("cus");
@@ -95,7 +95,7 @@ function decodeCustomerCursor(value?: string) {
   } catch { return undefined; }
 }
 
-customerRoutes.patch("/:id", zValidator("json", customerInput.partial()), async (context) => {
+customerRoutes.patch("/:id", validate("json", customerInput.partial()), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const db = createDb(context.env.DB);

@@ -1,4 +1,3 @@
-import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -7,6 +6,7 @@ import { requireAuth, requireRole } from "../auth/middleware";
 import { createDb } from "../db";
 import { notifications, savedViews, teamMembers, teams, ticketDrafts, ticketReadStates, tickets } from "../db/schema";
 import { HttpError } from "../http/errors";
+import { validate } from "../http/validate";
 import { newId } from "../lib/id";
 import type { HonoEnv } from "../types";
 import { ticketPriorities, ticketStatuses } from "../../shared/domain";
@@ -73,7 +73,7 @@ operationRoutes.get("/tickets/:ticketId/draft", async (context) => {
   return context.json({ draft });
 });
 
-operationRoutes.put("/tickets/:ticketId/draft", zValidator("json", draftInput), async (context) => {
+operationRoutes.put("/tickets/:ticketId/draft", validate("json", draftInput), async (context) => {
   const tenant = context.get("tenant");
   const ticketId = context.req.param("ticketId");
   const input = context.req.valid("json");
@@ -105,7 +105,7 @@ operationRoutes.get("/views", async (context) => {
   return context.json({ views: rows });
 });
 
-operationRoutes.post("/views", zValidator("json", z.object({ name: z.string().trim().min(1).max(80), visibility: z.enum(["personal", "shared"]).default("personal"), filters: viewFilters })), async (context) => {
+operationRoutes.post("/views", validate("json", z.object({ name: z.string().trim().min(1).max(80), visibility: z.enum(["personal", "shared"]).default("personal"), filters: viewFilters })), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   if (input.visibility === "shared" && tenant.role === "agent") throw new HttpError(403, "forbidden", "Only admins can create shared views.");
@@ -120,7 +120,7 @@ operationRoutes.get("/teams", async (context) => {
   return context.json({ teams: rows.results });
 });
 
-operationRoutes.post("/teams", requireRole("admin"), zValidator("json", z.object({ name: z.string().trim().min(1).max(80), userIds: z.array(z.string()).max(50).default([]) })), async (context) => {
+operationRoutes.post("/teams", requireRole("admin"), validate("json", z.object({ name: z.string().trim().min(1).max(80), userIds: z.array(z.string()).max(50).default([]) })), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   const id = newId("tem");
@@ -134,7 +134,7 @@ operationRoutes.post("/teams", requireRole("admin"), zValidator("json", z.object
   return context.json({ team: { id, ...input } }, 201);
 });
 
-operationRoutes.post("/tickets/bulk", zValidator("json", z.object({ ticketIds: z.array(z.string()).min(1).max(20), status: z.enum(ticketStatuses).optional(), priority: z.enum(ticketPriorities).optional(), assignedUserId: z.string().nullable().optional() })), async (context) => {
+operationRoutes.post("/tickets/bulk", validate("json", z.object({ ticketIds: z.array(z.string()).min(1).max(20), status: z.enum(ticketStatuses).optional(), priority: z.enum(ticketPriorities).optional(), assignedUserId: z.string().nullable().optional() })), async (context) => {
   const tenant = context.get("tenant");
   const input = context.req.valid("json");
   if (input.status === undefined && input.priority === undefined && input.assignedUserId === undefined) throw new HttpError(400, "empty_bulk_action", "Choose at least one change.");
