@@ -85,7 +85,12 @@ describe("tenant ticket workflow", () => {
     const body = JSON.stringify({ body: "same", kind: "message", clientMessageId: "client-message-0001" });
     const responses = await Promise.all([1, 2, 3].map(() => request(`/tickets/${ticket.id}/messages`, { method: "POST", body }, workspace)));
     expect(responses.every((response) => response.status === 201 || response.status === 200)).toBe(true);
+    const bodies = await Promise.all(responses.map((response) => response.json() as Promise<{ duplicate?: boolean }>));
+    expect(bodies.filter((entry) => !entry.duplicate)).toHaveLength(1);
     const count = await env.DB.prepare("SELECT count(*) AS count FROM messages WHERE organization_id = ? AND client_message_id = ?").bind(workspace.organizationId, "client-message-0001").first<{ count: number }>();
     expect(count?.count).toBe(1);
+    // The ticket must be bumped exactly once, by whichever request won the insert.
+    const bumped = await env.DB.prepare("SELECT message_count AS messageCount FROM tickets WHERE id = ?").bind(ticket.id).first<{ messageCount: number }>();
+    expect(bumped?.messageCount).toBe(2);
   });
 });

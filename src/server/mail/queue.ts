@@ -20,23 +20,32 @@ type InboundPayload =
 export async function processInboundMail(env: AppBindings, payload: InboundPayload) {
   const staged = "stagingObjectKey" in payload;
   const eventId = staged ? payload.eventId : newId("ime");
-  let raw: ArrayBuffer;
-  if (staged) {
-    const object = await env.ATTACHMENTS.get(payload.stagingObjectKey);
-    if (!object) {
-      const event = await env.DB.prepare("SELECT status FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ status: string }>();
-      if (event?.status === "completed") return;
-      throw new Error("The staged inbound email is missing.");
-    }
-    if (object.size > maximumRawMailSize) throw new Error("Inbound email exceeds the 25 MB processing limit.");
-    raw = await object.arrayBuffer();
-  } else {
-    if (payload.raw.byteLength > maximumRawMailSize) throw new Error("Inbound email exceeds the 25 MB processing limit.");
-    raw = payload.raw;
-  }
-
   const db = createDb(env.DB);
+  // Spend the retry budget before anything can fail. A staged payload whose
+  // object has gone missing, or whose recipient no longer maps to an inbox,
+  // never reaches the parser, so counting the attempt further down would leave
+  // the cron re-queueing that same row on every tick forever.
+  const attempts = staged
+    ? (await env.DB.prepare("UPDATE inbound_mail_events SET attempts = attempts + 1, updated_at = ? WHERE id = ? RETURNING attempts").bind(Date.now(), eventId).first<{ attempts: number }>())?.attempts ?? 1
+    : 1;
   try {
+    // Reading the staged object sits inside the try so a missing or oversized
+    // payload lands in the catch and marks the event failed with the reason.
+    let raw: ArrayBuffer;
+    if (staged) {
+      const object = await env.ATTACHMENTS.get(payload.stagingObjectKey);
+      if (!object) {
+        const event = await env.DB.prepare("SELECT status FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ status: string }>();
+        if (event?.status === "completed") return;
+        throw new Error("The staged inbound email is missing.");
+      }
+      if (object.size > maximumRawMailSize) throw new Error("Inbound email exceeds the 25 MB processing limit.");
+      raw = await object.arrayBuffer();
+    } else {
+      if (payload.raw.byteLength > maximumRawMailSize) throw new Error("Inbound email exceeds the 25 MB processing limit.");
+      raw = payload.raw;
+    }
+
     const mail = await new PostalMimeIncomingProvider().parse(raw);
     const recipient = (mail.to || payload.to || "").toLowerCase();
     const inbox = await resolveInbox(env.DB, recipient);
@@ -48,7 +57,6 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
       return;
     }
-    const attempts = await nextAttempt(env.DB, eventId);
 
     await db.insert(inboundMailEvents).values({
       id: eventId,
@@ -272,11 +280,6 @@ async function resolveInbox(database: D1Database, recipient: string) {
   const now = Date.now();
   await database.prepare("INSERT OR IGNORE INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at) VALUES (?, ?, 'Support', ?, 'cloudflare_email', 1, ?, ?)").bind(id, organization.organizationId, recipient, now, now).run();
   return database.prepare("SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? LIMIT 1").bind(recipient).first<{ id: string; organizationId: string }>();
-}
-
-async function nextAttempt(database: D1Database, eventId: string) {
-  const row = await database.prepare("SELECT attempts FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ attempts: number }>();
-  return (row?.attempts ?? 0) + 1;
 }
 
 async function logMailActivity(db: ReturnType<typeof createDb>, organizationId: string, ticketId: string, eventType: string, entityType: string, entityId: string, metadata: Record<string, unknown>) {

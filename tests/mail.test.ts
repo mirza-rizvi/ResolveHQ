@@ -202,7 +202,11 @@ describe("scheduled mail recovery", () => {
     const recovered = await env.DB.prepare("SELECT status FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ status: string }>();
     expect(recovered?.status).toBe("failed");
     expect(await env.ATTACHMENTS.head(expiredKey)).toBeNull();
+    const retired = await env.DB.prepare("SELECT staging_object_key AS key FROM inbound_mail_events WHERE id = ?").bind("ime_cron_expired").first<{ key: string }>();
+    expect(retired?.key).toBe("deleted/ime_cron_expired");
     expect(await env.ATTACHMENTS.head(stagingObjectKey)).not.toBeNull();
+    const live = await env.DB.prepare("SELECT staging_object_key AS key FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ key: string }>();
+    expect(live?.key).toBe(stagingObjectKey);
 
     // The cron re-enqueue carries no envelope addresses, so processing must rely
     // on the parsed headers alone and must not collide with the existing row.
@@ -211,6 +215,41 @@ describe("scheduled mail recovery", () => {
     expect(completed?.status).toBe("completed");
     const ticket = await env.DB.prepare("SELECT subject FROM tickets WHERE organization_id = ? AND subject = ?").bind(workspace.organizationId, "Stalled inbound").first<{ subject: string }>();
     expect(ticket?.subject).toBe("Stalled inbound");
+  });
+
+  it("adopts an agent reply whose outbound job never landed", async () => {
+    const workspace = await signup("mail-orphan");
+    const { request } = await import("./helpers");
+    const customer = (await (await request("/customers", { method: "POST", body: JSON.stringify({ name: "Orphan", email: "orphan@example.test" }) }, workspace)).json() as { customer: { id: string } }).customer;
+    const ticket = (await (await request("/tickets", { method: "POST", body: JSON.stringify({ customerId: customer.id, subject: "Orphan", message: "first" }) }, workspace)).json() as { ticket: { id: string } }).ticket;
+    // A reply whose message insert committed but whose ticket/job batch never ran.
+    const messageId = "msg_orphaned_reply_fixture";
+    await env.DB.prepare("INSERT INTO messages (id, organization_id, ticket_id, author_type, author_user_id, kind, body_text, normalized_search, delivery_status, created_at) VALUES (?, ?, ?, 'agent', ?, 'message', 'orphaned reply', 'orphaned reply', 'queued', ?)")
+      .bind(messageId, workspace.organizationId, ticket.id, workspace.userId, Date.now() - 5 * 60 * 1000).run();
+    expect(await env.DB.prepare("SELECT id FROM outbound_mail_jobs WHERE message_id = ?").bind(messageId).first()).toBeNull();
+
+    const context = createExecutionContext();
+    await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *", noRetry: () => undefined }, env as AppBindings, context);
+    await waitOnExecutionContext(context);
+
+    const job = await env.DB.prepare("SELECT id, status, idempotency_key AS idempotencyKey FROM outbound_mail_jobs WHERE message_id = ?").bind(messageId).first<{ id: string; status: string; idempotencyKey: string }>();
+    expect(job?.status).toBe("pending");
+    expect(job?.idempotencyKey).toBe(`message/${messageId}`);
+    expect(job?.id).toMatch(/^omj_[0-9a-f]{32}$/);
+  });
+
+  it("counts an attempt and records the reason when the staged payload is gone", async () => {
+    const eventId = "ime_missing_payload";
+    const stagingObjectKey = `_mail-staging/${eventId}.eml`;
+    const now = Date.now();
+    await env.DB.prepare("INSERT INTO inbound_mail_events (id, staging_object_key, status, attachment_cursor, attempts, created_at, updated_at) VALUES (?, ?, 'failed', 0, 0, ?, ?)").bind(eventId, stagingObjectKey, now, now).run();
+    // Nothing was ever written to R2 under that key.
+    await expect(processInboundMail(env as AppBindings, { eventId, stagingObjectKey, from: "", to: "" })).rejects.toThrow("The staged inbound email is missing.");
+    const row = await env.DB.prepare("SELECT attempts, status, last_error AS lastError FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ attempts: number; status: string; lastError: string }>();
+    // Without the attempt landing here the cron would re-queue this row forever.
+    expect(row?.attempts).toBe(1);
+    expect(row?.status).toBe("failed");
+    expect(row?.lastError).toBe("The staged inbound email is missing.");
   });
 });
 
