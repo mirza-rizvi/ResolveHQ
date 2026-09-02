@@ -53,4 +53,20 @@ describe("authentication", () => {
     expect((await request("/auth/me", {}, workspace)).status).toBe(200);
     expect((await request("/auth/me", {}, secondSession)).status).toBe(401);
   });
+
+  it("lets an existing user accept an invitation and switch workspaces", async () => {
+    const host = await signup("invite-host");
+    const guest = await signup("invite-guest");
+    const invitation = await (await request("/organization/invitations", { method: "POST", body: JSON.stringify({ email: "owner-invite-guest@example.test", role: "agent" }) }, host)).json() as { invitation: { inviteUrl: string } };
+    const token = new URL(invitation.invitation.inviteUrl).searchParams.get("token")!;
+    expect((await request("/auth/accept-invitation", { method: "POST", body: JSON.stringify({ token }) }, host)).status).toBe(409);
+    const accepted = await request("/auth/accept-invitation", { method: "POST", body: JSON.stringify({ token }) }, guest);
+    expect(accepted.status).toBe(200);
+    const me = await (await request("/auth/me", {}, guest)).json() as { organization: { id: string }; role: string; workspaces: unknown[] };
+    expect(me.organization.id).toBe(host.organizationId);
+    expect(me.role).toBe("agent");
+    expect(me.workspaces).toHaveLength(2);
+    expect((await request("/auth/switch-workspace", { method: "POST", body: JSON.stringify({ organizationId: guest.organizationId }) }, guest)).status).toBe(200);
+    expect(((await (await request("/auth/me", {}, guest)).json()) as { organization: { id: string } }).organization.id).toBe(guest.organizationId);
+  });
 });

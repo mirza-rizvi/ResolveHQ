@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { z } from "zod";
@@ -11,7 +11,7 @@ import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { sendSystemMail } from "resolve-server/mail/system";
 import type { HonoEnv } from "resolve-server/types";
 import { hashPassword, verifyPassword } from "./password";
-import { clearSessionCookies, createSession, SESSION_COOKIE } from "./session";
+import { clearSessionCookies, createSession, resolveTenant, SESSION_COOKIE } from "./session";
 import { requireAuth } from "./middleware";
 
 const credentials = z.object({
@@ -77,6 +77,7 @@ authRoutes.post("/login", validate("json", credentials), async (context) => {
     .innerJoin(organizationMemberships, and(eq(organizationMemberships.userId, users.id), isNull(organizationMemberships.disabledAt)))
     .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
     .where(and(eq(users.email, input.email), isNull(users.disabledAt)))
+    .orderBy(asc(organizationMemberships.createdAt))
     .limit(1);
 
   if (!result || !(await verifyPassword(input.password, result.passwordHash, context.env.SESSION_PEPPER))) {
@@ -95,8 +96,8 @@ authRoutes.post("/login", validate("json", credentials), async (context) => {
 
 authRoutes.post("/accept-invitation", validate("json", z.object({
   token: z.string().min(20).max(200),
-  name: z.string().trim().min(2).max(100),
-  password: z.string().min(12).max(128),
+  name: z.string().trim().min(2).max(100).optional(),
+  password: z.string().min(12).max(128).optional(),
 })), async (context) => {
   const input = context.req.valid("json");
   const db = createDb(context.env.DB);
@@ -106,8 +107,25 @@ authRoutes.post("/accept-invitation", validate("json", z.object({
     isNull(organizationInvitations.acceptedAt),
   )).limit(1);
   if (!invitation || invitation.expiresAt <= new Date()) throw new HttpError(404, "invitation_invalid", "This invitation is invalid or has expired.");
+
+  const tenant = await resolveTenant(context);
+  if (tenant) {
+    const [me] = await db.select({ email: users.email, name: users.name }).from(users).where(eq(users.id, tenant.userId)).limit(1);
+    if (!me || me.email !== invitation.email) throw new HttpError(409, "wrong_account", "This invitation was sent to a different email address. Sign out and try again.");
+    const now = new Date();
+    await db.batch([
+      db.insert(organizationMemberships).values({ organizationId: invitation.organizationId, userId: tenant.userId, role: invitation.role, createdAt: now })
+        .onConflictDoUpdate({ target: [organizationMemberships.organizationId, organizationMemberships.userId], set: { role: invitation.role, disabledAt: null } }),
+      db.update(organizationInvitations).set({ acceptedAt: now }).where(eq(organizationInvitations.id, invitation.id)),
+    ]);
+    const token = getCookie(context, SESSION_COOKIE)!;
+    await db.update(sessions).set({ organizationId: invitation.organizationId, lastSeenAt: now }).where(eq(sessions.tokenHash, await sha256(`${token}.${context.env.SESSION_PEPPER}`)));
+    return context.json({ ok: true, organizationId: invitation.organizationId, role: invitation.role });
+  }
+
   const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, invitation.email)).limit(1);
   if (existing) throw new HttpError(409, "account_exists", "Sign in before accepting this invitation.");
+  if (!input.name || !input.password) throw new HttpError(400, "validation_error", "name: Required to create your account.");
   const userId = newId("usr");
   const now = new Date();
   await db.batch([
