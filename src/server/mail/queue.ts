@@ -1,80 +1,268 @@
 import { and, eq } from "drizzle-orm";
 import { createDb } from "../db";
-import { activityLogs, attachments, customers, messages, organizations, tickets } from "../db/schema";
+import { activityLogs, attachments, customers, inboundMailEvents, messages, outboundMailJobs, tickets } from "../db/schema";
 import { base64Url } from "../lib/crypto";
 import { newId, normalizeSearch } from "../lib/id";
-import { DevelopmentMailProvider, PostalMimeIncomingProvider } from "../providers/mail";
+import { DevelopmentMailProvider, PostalMimeIncomingProvider, ResendMailProvider } from "../providers/mail";
 import type { AppBindings } from "../types";
 
+const maximumRawMailSize = 25 * 1024 * 1024;
 const maximumAttachmentSize = 15 * 1024 * 1024;
 const safeMailTypes = new Set(["application/pdf", "application/zip", "application/json", "text/plain", "text/csv", "image/jpeg", "image/png", "image/gif", "image/webp"]);
 
-export async function processInboundMail(env: AppBindings, payload: { raw: ArrayBuffer; from: string; to: string }) {
-  const mail = await new PostalMimeIncomingProvider().parse(payload.raw);
-  const recipient = (mail.to || payload.to).toLowerCase();
-  const workspace = await env.DB.prepare("SELECT id AS organizationId FROM organizations WHERE lower(support_email) = ? LIMIT 1").bind(recipient).first<{ organizationId: string }>();
-  if (!workspace) throw new Error(`No ResolveHQ inbox is configured for ${recipient}.`);
-  const organizationId = workspace.organizationId;
+type InboundPayload =
+  | { raw: ArrayBuffer; from: string; to: string }
+  | { eventId: string; stagingObjectKey: string; from: string; to: string };
+
+export async function processInboundMail(env: AppBindings, payload: InboundPayload) {
+  const staged = "stagingObjectKey" in payload;
+  const eventId = staged ? payload.eventId : newId("ime");
+  let raw: ArrayBuffer;
+  if (staged) {
+    const object = await env.ATTACHMENTS.get(payload.stagingObjectKey);
+    if (!object) {
+      const event = await env.DB.prepare("SELECT status FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ status: string }>();
+      if (event?.status === "completed") return;
+      throw new Error("The staged inbound email is missing.");
+    }
+    if (object.size > maximumRawMailSize) throw new Error("Inbound email exceeds the 25 MB processing limit.");
+    raw = await object.arrayBuffer();
+  } else {
+    if (payload.raw.byteLength > maximumRawMailSize) throw new Error("Inbound email exceeds the 25 MB processing limit.");
+    raw = payload.raw;
+  }
+
   const db = createDb(env.DB);
-  const [duplicate] = await db.select({ id: messages.id }).from(messages).where(and(eq(messages.organizationId, organizationId), eq(messages.providerMessageId, mail.providerMessageId))).limit(1);
-  if (duplicate) return;
+  try {
+    const mail = await new PostalMimeIncomingProvider().parse(raw);
+    const recipient = (mail.to || payload.to).toLowerCase();
+    const inbox = await resolveInbox(env.DB, recipient);
+    if (!inbox) throw new Error(`No ResolveHQ inbox is configured for ${recipient}.`);
+    const organizationId = inbox.organizationId;
+    const now = new Date();
+    const duplicateEvent = await env.DB.prepare("SELECT status FROM inbound_mail_events WHERE inbox_id = ? AND provider_message_id = ? LIMIT 1").bind(inbox.id, mail.providerMessageId).first<{ status: string }>();
+    if (duplicateEvent?.status === "completed") {
+      if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
+      return;
+    }
+    const attempts = await nextAttempt(env.DB, eventId);
 
-  let [customer] = await db.select().from(customers).where(and(eq(customers.organizationId, organizationId), eq(customers.email, mail.from.email))).limit(1);
-  if (!customer) {
-    const customerId = newId("cus");
-    await db.insert(customers).values({ id: customerId, organizationId, name: mail.from.name || mail.from.email.split("@")[0], email: mail.from.email, normalizedSearch: normalizeSearch(mail.from.name, mail.from.email), lastContactedAt: new Date() });
-    [customer] = await db.select().from(customers).where(and(eq(customers.organizationId, organizationId), eq(customers.id, customerId))).limit(1);
+    await db.insert(inboundMailEvents).values({
+      id: eventId,
+      inboxId: inbox.id,
+      organizationId,
+      stagingObjectKey: staged ? payload.stagingObjectKey : `test://${eventId}`,
+      providerMessageId: mail.providerMessageId,
+      status: "processing",
+      attempts,
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: inboundMailEvents.id,
+      set: { inboxId: inbox.id, organizationId, providerMessageId: mail.providerMessageId, status: "processing", attempts, lastError: null, updatedAt: now },
+    });
+
+    const existing = await env.DB.prepare(
+      "SELECT m.id AS messageId, m.ticket_id AS ticketId, t.number, t.subject, t.customer_id AS customerId FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id WHERE m.organization_id = ? AND m.provider_message_id = ? LIMIT 1",
+    ).bind(organizationId, mail.providerMessageId).first<ExistingMessage>();
+
+    let customer = await db.select().from(customers).where(and(eq(customers.organizationId, organizationId), eq(customers.email, mail.from.email))).limit(1).then((rows) => rows[0]);
+    if (!customer) {
+      const customerId = newId("cus");
+      await db.insert(customers).values({
+        id: customerId,
+        organizationId,
+        name: mail.from.name || mail.from.email.split("@")[0],
+        email: mail.from.email,
+        normalizedSearch: normalizeSearch(mail.from.name, mail.from.email),
+        lastContactedAt: now,
+      });
+      customer = await db.select().from(customers).where(and(eq(customers.organizationId, organizationId), eq(customers.id, customerId))).limit(1).then((rows) => rows[0]);
+    }
+    if (!customer) throw new Error("Could not resolve inbound customer.");
+
+    let ticket: TicketReference | undefined = existing ? {
+      id: existing.ticketId,
+      number: existing.number,
+      subject: existing.subject,
+      customerId: existing.customerId,
+    } : undefined;
+
+    // A visible ticket number is not an authentication mechanism. Replies only
+    // attach through a provider Message-ID and must match inbox and customer.
+    if (!ticket && mail.inReplyTo) {
+      ticket = await env.DB.prepare(
+        "SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = t.organization_id WHERE m.organization_id = ? AND m.provider_message_id = ? AND c.email = ? AND t.inbox_id = ? LIMIT 1",
+      ).bind(organizationId, mail.inReplyTo, mail.from.email, inbox.id).first<TicketReference>() ?? undefined;
+    }
+
+    if (!ticket) {
+      const numberRow = await env.DB.prepare("UPDATE organizations SET next_ticket_number = next_ticket_number + 1, updated_at = ? WHERE id = ? RETURNING next_ticket_number - 1 AS number").bind(now.getTime(), organizationId).first<{ number: number }>();
+      if (!numberRow) throw new Error("Inbound workspace no longer exists.");
+      ticket = { id: newId("tkt"), number: numberRow.number, subject: mail.subject, customerId: customer.id };
+      await db.insert(tickets).values({
+        id: ticket.id,
+        organizationId,
+        inboxId: inbox.id,
+        number: ticket.number,
+        customerId: customer.id,
+        subject: ticket.subject,
+        status: "open",
+        priority: "normal",
+        normalizedSearch: normalizeSearch(String(ticket.number), ticket.subject, customer.name, customer.email),
+        lastReplyAt: now,
+        lastCustomerReplyAt: now,
+        lastMessagePreview: preview(mail.text),
+      });
+      await logMailActivity(db, organizationId, ticket.id, "ticket.created_from_email", "ticket", ticket.id, { inboxId: inbox.id });
+    }
+
+    const messageId = existing?.messageId ?? newId("msg");
+    if (!existing) {
+      await db.insert(messages).values({
+        id: messageId,
+        organizationId,
+        ticketId: ticket.id,
+        authorType: "customer",
+        authorCustomerId: customer.id,
+        kind: "message",
+        bodyText: mail.text,
+        normalizedSearch: normalizeSearch(mail.text),
+        providerMessageId: mail.providerMessageId,
+        deliveryStatus: "received",
+        createdAt: now,
+      });
+      await env.DB.prepare(
+        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, updated_at = ?, last_reply_at = ?, last_customer_reply_at = ?, last_message_preview = ?, message_count = message_count + 1, version = version + 1 WHERE organization_id = ? AND id = ?",
+      ).bind(now.getTime(), now.getTime(), now.getTime(), preview(mail.text), organizationId, ticket.id).run();
+      await refreshTicketSearch(env.DB, organizationId, ticket.id);
+    } else {
+      // Reconcile the denormalized ticket state in case a previous delivery
+      // stopped after the unique message insert but before the ticket update.
+      await env.DB.prepare(
+        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, last_reply_at = max(coalesce(last_reply_at, 0), ?), last_customer_reply_at = max(coalesce(last_customer_reply_at, 0), ?), last_message_preview = ?, message_count = (SELECT count(*) FROM messages WHERE organization_id = ? AND ticket_id = ?) WHERE organization_id = ? AND id = ?",
+      ).bind(now.getTime(), now.getTime(), preview(mail.text), organizationId, ticket.id, organizationId, ticket.id).run();
+      await refreshTicketSearch(env.DB, organizationId, ticket.id);
+    }
+    await db.update(customers).set({ lastContactedAt: now, updatedAt: now }).where(and(eq(customers.organizationId, organizationId), eq(customers.id, customer.id)));
+
+    const cursor = await env.DB.prepare("SELECT attachment_cursor AS cursor FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ cursor: number }>();
+    for (let index = cursor?.cursor ?? 0; index < mail.attachments.length; index += 1) {
+      const file = mail.attachments[index];
+      if (file.body.byteLength > 0 && file.body.byteLength <= maximumAttachmentSize && safeMailTypes.has(file.contentType) && matchesSignature(new Uint8Array(file.body), file.contentType)) {
+        const id = `att_${eventId}_${index}`;
+        const objectKey = `${organizationId}/mail/${eventId}/${index}`;
+        const checksum = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", file.body)));
+        await env.ATTACHMENTS.put(objectKey, file.body, { httpMetadata: { contentType: file.contentType }, customMetadata: { attachmentId: id } });
+        await db.insert(attachments).values({
+          id,
+          organizationId,
+          ticketId: ticket.id,
+          messageId,
+          objectKey,
+          filename: safeFilename(file.filename),
+          contentType: file.contentType,
+          size: file.body.byteLength,
+          checksum,
+        }).onConflictDoNothing();
+      }
+      await db.update(inboundMailEvents).set({ attachmentCursor: index + 1, updatedAt: new Date() }).where(eq(inboundMailEvents.id, eventId));
+    }
+
+    await db.update(inboundMailEvents).set({ status: "completed", messageId, completedAt: new Date(), updatedAt: new Date(), lastError: null }).where(eq(inboundMailEvents.id, eventId));
+    if (!existing) await logMailActivity(db, organizationId, ticket.id, "ticket.customer_replied", "message", messageId, { providerMessageId: mail.providerMessageId });
+    if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
+  } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 1000) : "Unknown inbound mail error";
+    await env.DB.prepare("UPDATE inbound_mail_events SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?").bind(message, Date.now(), eventId).run().catch(() => undefined);
+    throw error;
   }
-  if (!customer) throw new Error("Could not resolve inbound customer.");
-
-  let ticket: { id: string; number: number; subject: string } | undefined;
-  if (mail.inReplyTo) {
-    [ticket] = await db.select({ id: tickets.id, number: tickets.number, subject: tickets.subject }).from(messages).innerJoin(tickets, and(eq(tickets.id, messages.ticketId), eq(tickets.organizationId, organizationId))).where(and(eq(messages.organizationId, organizationId), eq(messages.providerMessageId, mail.inReplyTo))).limit(1);
-  }
-  const referencedNumber = mail.subject.match(/\[#?(\d+)]|#(\d+)/)?.slice(1).find(Boolean);
-  if (!ticket && referencedNumber) [ticket] = await db.select({ id: tickets.id, number: tickets.number, subject: tickets.subject }).from(tickets).where(and(eq(tickets.organizationId, organizationId), eq(tickets.number, Number(referencedNumber)))).limit(1);
-
-  const now = new Date();
-  if (!ticket) {
-    const numberRow = await env.DB.prepare("UPDATE organizations SET next_ticket_number = next_ticket_number + 1, updated_at = ? WHERE id = ? RETURNING next_ticket_number - 1 AS number").bind(now.getTime(), organizationId).first<{ number: number }>();
-    if (!numberRow) throw new Error("Inbound workspace no longer exists.");
-    ticket = { id: newId("tkt"), number: numberRow.number, subject: mail.subject };
-    await db.insert(tickets).values({ id: ticket.id, organizationId, number: ticket.number, customerId: customer.id, subject: ticket.subject, status: "open", priority: "normal", normalizedSearch: normalizeSearch(String(ticket.number), ticket.subject, customer.name, customer.email), lastReplyAt: now });
-    await logMailActivity(db, organizationId, ticket.id, "ticket.created_from_email", "ticket", ticket.id, { recipient });
-  }
-
-  const messageId = newId("msg");
-  await db.insert(messages).values({ id: messageId, organizationId, ticketId: ticket.id, authorType: "customer", authorCustomerId: customer.id, kind: "message", bodyText: mail.text, normalizedSearch: normalizeSearch(mail.text), providerMessageId: mail.providerMessageId, deliveryStatus: "received", createdAt: now });
-  await db.update(tickets).set({ status: "open", resolvedAt: null, closedAt: null, updatedAt: now, lastReplyAt: now }).where(and(eq(tickets.organizationId, organizationId), eq(tickets.id, ticket.id)));
-  await db.update(customers).set({ lastContactedAt: now, updatedAt: now }).where(and(eq(customers.organizationId, organizationId), eq(customers.id, customer.id)));
-
-  for (const file of mail.attachments) {
-    if (file.body.byteLength < 1 || file.body.byteLength > maximumAttachmentSize || !safeMailTypes.has(file.contentType) || !matchesSignature(new Uint8Array(file.body), file.contentType)) continue;
-    const id = newId("att"); const objectKey = `${organizationId}/${id}/${crypto.randomUUID()}`;
-    await env.ATTACHMENTS.put(objectKey, file.body, { httpMetadata: { contentType: file.contentType }, customMetadata: { attachmentId: id } });
-    const checksum = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", file.body)));
-    try { await db.insert(attachments).values({ id, organizationId, ticketId: ticket.id, messageId, objectKey, filename: safeFilename(file.filename), contentType: file.contentType, size: file.body.byteLength, checksum }); }
-    catch (error) { await env.ATTACHMENTS.delete(objectKey); throw error; }
-  }
-  await logMailActivity(db, organizationId, ticket.id, "ticket.customer_replied", "message", messageId, { providerMessageId: mail.providerMessageId });
 }
 
-export async function processOutboundMail(env: AppBindings, payload: { organizationId: string; messageId: string }) {
+export async function processOutboundMail(env: AppBindings, payload: { jobId?: string; organizationId?: string; messageId?: string }) {
+  const now = new Date();
+  let job = payload.jobId
+    ? await env.DB.prepare("SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts FROM outbound_mail_jobs WHERE id = ?").bind(payload.jobId).first<JobRow>()
+    : null;
+  if (!job && payload.organizationId && payload.messageId) {
+    const id = newId("omj");
+    await env.DB.prepare("INSERT OR IGNORE INTO outbound_mail_jobs (id, organization_id, message_id, idempotency_key, status, attempts, next_attempt_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)")
+      .bind(id, payload.organizationId, payload.messageId, `message/${payload.messageId}`, now.getTime(), now.getTime(), now.getTime()).run();
+    job = await env.DB.prepare("SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts FROM outbound_mail_jobs WHERE message_id = ?").bind(payload.messageId).first<JobRow>();
+  }
+  if (!job || job.status === "sent") return;
+  await env.DB.prepare("UPDATE outbound_mail_jobs SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE id = ? AND status <> 'sent'").bind(now.getTime(), job.id).run();
   const db = createDb(env.DB);
-  const [row] = await db.select({ body: messages.bodyText, status: messages.deliveryStatus, customerEmail: customers.email, subject: tickets.subject, number: tickets.number, organizationSlug: organizations.slug, supportEmail: organizations.supportEmail })
-    .from(messages).innerJoin(tickets, and(eq(tickets.id, messages.ticketId), eq(tickets.organizationId, payload.organizationId))).innerJoin(customers, and(eq(customers.id, tickets.customerId), eq(customers.organizationId, payload.organizationId))).innerJoin(organizations, eq(organizations.id, payload.organizationId))
-    .where(and(eq(messages.organizationId, payload.organizationId), eq(messages.id, payload.messageId))).limit(1);
-  if (!row || row.status === "sent") return;
-  if (env.DEV_MAIL_MODE !== "capture") throw new Error("No production outgoing mail adapter is configured.");
-  const result = await new DevelopmentMailProvider().send({ from: row.supportEmail || `support@${row.organizationSlug}.invalid`, to: row.customerEmail, subject: `[#${row.number}] ${row.subject}`, text: row.body });
-  await db.update(messages).set({ deliveryStatus: "sent", providerMessageId: result.providerMessageId }).where(and(eq(messages.organizationId, payload.organizationId), eq(messages.id, payload.messageId)));
-  console.info("ResolveHQ captured outbound mail", { to: row.customerEmail, subject: `[#${row.number}] ${row.subject}`, providerMessageId: result.providerMessageId });
+  const row = await env.DB.prepare(
+    "SELECT m.body_text AS body, m.body_html AS html, m.delivery_status AS status, c.email AS customerEmail, t.subject, t.number, o.slug AS organizationSlug, coalesce(i.email_address, o.support_email) AS supportEmail FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = m.organization_id JOIN organizations o ON o.id = m.organization_id LEFT JOIN inboxes i ON i.id = t.inbox_id AND i.organization_id = t.organization_id WHERE m.organization_id = ? AND m.id = ? LIMIT 1",
+  ).bind(job.organizationId, job.messageId).first<OutboundRow>();
+  if (!row || row.status === "sent") {
+    await db.update(outboundMailJobs).set({ status: "sent", sentAt: now, updatedAt: now }).where(eq(outboundMailJobs.id, job.id));
+    return;
+  }
+  try {
+    const provider = env.RESEND_API_KEY ? new ResendMailProvider(env.RESEND_API_KEY) : env.DEV_MAIL_MODE === "capture" ? new DevelopmentMailProvider() : null;
+    if (!provider) throw new Error("No outgoing mail provider is configured.");
+    const result = await provider.send({
+      from: row.supportEmail || `support@${row.organizationSlug}.invalid`,
+      to: row.customerEmail,
+      subject: `[#${row.number}] ${row.subject}`,
+      text: row.body,
+      html: row.html,
+    }, { idempotencyKey: job.idempotencyKey });
+    await db.batch([
+      db.update(messages).set({ deliveryStatus: "sent", providerMessageId: result.providerMessageId }).where(and(eq(messages.organizationId, job.organizationId), eq(messages.id, job.messageId))),
+      db.update(outboundMailJobs).set({ status: "sent", providerMessageId: result.providerMessageId, sentAt: now, lastError: null, updatedAt: now }).where(eq(outboundMailJobs.id, job.id)),
+    ]);
+  } catch (error) {
+    const attempts = job.attempts + 1;
+    const delay = Math.min(3600, 15 * 2 ** Math.min(attempts, 8));
+    await db.update(outboundMailJobs).set({
+      status: "failed",
+      lastError: error instanceof Error ? error.message.slice(0, 1000) : "Unknown mail error",
+      nextAttemptAt: new Date(Date.now() + delay * 1000),
+      updatedAt: new Date(),
+    }).where(eq(outboundMailJobs.id, job.id));
+    throw error;
+  }
+}
+
+interface ExistingMessage { messageId: string; ticketId: string; number: number; subject: string; customerId: string }
+interface TicketReference { id: string; number: number; subject: string; customerId: string }
+interface JobRow { id: string; organizationId: string; messageId: string; idempotencyKey: string; status: string; attempts: number }
+interface OutboundRow { body: string; html?: string; status: string; customerEmail: string; subject: string; number: number; organizationSlug: string; supportEmail?: string }
+
+async function resolveInbox(database: D1Database, recipient: string) {
+  const existing = await database.prepare("SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? AND disabled_at IS NULL LIMIT 1").bind(recipient).first<{ id: string; organizationId: string }>();
+  if (existing) return existing;
+  const organization = await database.prepare("SELECT id AS organizationId FROM organizations WHERE lower(support_email) = ? LIMIT 1").bind(recipient).first<{ organizationId: string }>();
+  if (!organization) return null;
+  const id = newId("inb");
+  const now = Date.now();
+  await database.prepare("INSERT OR IGNORE INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at) VALUES (?, ?, 'Support', ?, 'cloudflare_email', 1, ?, ?)").bind(id, organization.organizationId, recipient, now, now).run();
+  return database.prepare("SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? LIMIT 1").bind(recipient).first<{ id: string; organizationId: string }>();
+}
+
+async function nextAttempt(database: D1Database, eventId: string) {
+  const row = await database.prepare("SELECT attempts FROM inbound_mail_events WHERE id = ?").bind(eventId).first<{ attempts: number }>();
+  return (row?.attempts ?? 0) + 1;
+}
+
+async function refreshTicketSearch(database: D1Database, organizationId: string, ticketId: string) {
+  const content = await database.prepare(
+    "SELECT t.normalized_search || ' ' || coalesce((SELECT group_concat(m.normalized_search, ' ') FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id), '') || ' ' || coalesce((SELECT group_concat(g.name, ' ') FROM ticket_tags tt JOIN tags g ON g.id = tt.tag_id AND g.organization_id = tt.organization_id WHERE tt.organization_id = t.organization_id AND tt.ticket_id = t.id), '') AS content FROM tickets t WHERE t.organization_id = ? AND t.id = ?",
+  ).bind(organizationId, ticketId).first<{ content: string }>();
+  await database.batch([
+    database.prepare("DELETE FROM ticket_search WHERE organization_id = ? AND ticket_id = ?").bind(organizationId, ticketId),
+    database.prepare("INSERT INTO ticket_search (organization_id, ticket_id, content) VALUES (?, ?, ?)").bind(organizationId, ticketId, content?.content ?? ""),
+  ]);
 }
 
 async function logMailActivity(db: ReturnType<typeof createDb>, organizationId: string, ticketId: string, eventType: string, entityType: string, entityId: string, metadata: Record<string, unknown>) {
   await db.insert(activityLogs).values({ id: newId("act"), organizationId, ticketId, eventType, entityType, entityId, metadata, requestId: "mail-queue" });
 }
 
+function preview(value: string) { return value.replace(/\s+/g, " ").trim().slice(0, 280); }
 function safeFilename(name: string) { return [...name].map((character) => { const code = character.charCodeAt(0); return code < 32 || code === 127 || character === "/" || character === "\\" ? "_" : character; }).join("").slice(0, 180) || "attachment"; }
 function matchesSignature(bytes: Uint8Array, type: string) {
   if (type.startsWith("text/") || type === "application/json") return !bytes.slice(0, 512).includes(0);

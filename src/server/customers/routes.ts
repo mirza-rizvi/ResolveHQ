@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, like, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "resolve-server/auth/middleware";
@@ -23,6 +23,8 @@ customerRoutes.use("*", requireAuth);
 customerRoutes.get("/", async (context) => {
   const tenant = context.get("tenant");
   const query = context.req.query("q")?.trim().toLowerCase();
+  const limit = Math.min(50, Math.max(1, Number(context.req.query("limit") ?? 30) || 30));
+  const cursor = decodeCustomerCursor(context.req.query("cursor"));
   const db = createDb(context.env.DB);
   const rows = await db
     .select({
@@ -40,11 +42,16 @@ customerRoutes.get("/", async (context) => {
     .where(and(
       eq(customers.organizationId, tenant.organizationId),
       query ? or(like(customers.normalizedSearch, `%${query}%`), like(customers.email, `%${query}%`)) : undefined,
+      cursor ? or(lt(customers.createdAt, new Date(cursor.createdAt)), and(eq(customers.createdAt, new Date(cursor.createdAt)), lt(customers.id, cursor.id))) : undefined,
     ))
     .groupBy(customers.id)
-    .orderBy(desc(customers.lastContactedAt), customers.name)
-    .limit(100);
-  return context.json({ customers: rows });
+    .orderBy(desc(customers.createdAt), desc(customers.id))
+    .limit(limit + 1);
+  const hasMore = rows.length > limit;
+  const items = rows.slice(0, limit);
+  const last = items.at(-1);
+  const nextCursor = hasMore && last ? btoa(JSON.stringify({ createdAt: new Date(last.createdAt).getTime(), id: last.id })).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "") : null;
+  return context.json({ customers: items, items, nextCursor, hasMore });
 });
 
 customerRoutes.post("/", zValidator("json", customerInput), async (context) => {
@@ -76,9 +83,17 @@ customerRoutes.get("/:id", async (context) => {
   const history = await db.select().from(tickets).where(and(
     eq(tickets.organizationId, tenant.organizationId),
     eq(tickets.customerId, customer.id),
-  )).orderBy(desc(tickets.updatedAt));
+  )).orderBy(desc(tickets.updatedAt)).limit(50);
   return context.json({ customer, tickets: history });
 });
+
+function decodeCustomerCursor(value?: string) {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(atob(value.replaceAll("-", "+").replaceAll("_", "/"))) as { createdAt?: unknown; id?: unknown };
+    return typeof parsed.createdAt === "number" && typeof parsed.id === "string" ? { createdAt: parsed.createdAt, id: parsed.id } : undefined;
+  } catch { return undefined; }
+}
 
 customerRoutes.patch("/:id", zValidator("json", customerInput.partial()), async (context) => {
   const tenant = context.get("tenant");
@@ -92,5 +107,15 @@ customerRoutes.patch("/:id", zValidator("json", customerInput.partial()), async 
     normalizedSearch: normalizeSearch(merged.name, merged.email, merged.company, merged.phone),
     updatedAt: new Date(),
   }).where(and(eq(customers.id, current.id), eq(customers.organizationId, tenant.organizationId)));
+  const related = await db.select({ id: tickets.id }).from(tickets).where(and(eq(tickets.organizationId, tenant.organizationId), eq(tickets.customerId, current.id))).limit(50);
+  for (const ticket of related) await refreshCustomerTicketSearch(context.env.DB, tenant.organizationId, ticket.id);
   return context.json({ customer: { ...current, ...input } });
 });
+
+async function refreshCustomerTicketSearch(database: D1Database, organizationId: string, ticketId: string) {
+  const row = await database.prepare("SELECT t.normalized_search || ' ' || c.normalized_search || ' ' || coalesce((SELECT group_concat(m.normalized_search, ' ') FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id), '') || ' ' || coalesce((SELECT group_concat(g.name, ' ') FROM ticket_tags tt JOIN tags g ON g.id = tt.tag_id AND g.organization_id = tt.organization_id WHERE tt.organization_id = t.organization_id AND tt.ticket_id = t.id), '') AS content FROM tickets t JOIN customers c ON c.id = t.customer_id AND c.organization_id = t.organization_id WHERE t.organization_id = ? AND t.id = ?").bind(organizationId, ticketId).first<{ content: string }>();
+  await database.batch([
+    database.prepare("DELETE FROM ticket_search WHERE organization_id = ? AND ticket_id = ?").bind(organizationId, ticketId),
+    database.prepare("INSERT INTO ticket_search (organization_id, ticket_id, content) VALUES (?, ?, ?)").bind(organizationId, ticketId, row?.content ?? ""),
+  ]);
+}

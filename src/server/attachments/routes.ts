@@ -4,7 +4,7 @@ import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
 import { attachments, messages, tickets } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
-import { base64Url } from "resolve-server/lib/crypto";
+import { base64Url, constantTimeEqual, fromBase64Url, signValue } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
 import { R2StorageProvider } from "resolve-server/providers/storage";
 import type { HonoEnv } from "resolve-server/types";
@@ -19,6 +19,62 @@ const allowedTypes = new Set([
 
 export const attachmentRoutes = new Hono<HonoEnv>();
 attachmentRoutes.use("*", requireAuth);
+
+attachmentRoutes.post("/intents", async (context) => {
+  const tenant = context.get("tenant");
+  const input = await context.req.json<{ ticketId?: string; messageId?: string; filename?: string; contentType?: string; size?: number }>().catch(() => null);
+  if (!input) throw new HttpError(400, "invalid_upload", "File metadata must be valid JSON.");
+  if (!input.ticketId || !input.messageId || !input.filename || !input.contentType || !Number.isInteger(input.size)) throw new HttpError(400, "invalid_upload", "File metadata is incomplete.");
+  if ((input.size ?? 0) < 1 || (input.size ?? 0) > maxFileSize) throw new HttpError(413, "file_too_large", "Files must be smaller than 15 MB.");
+  if (!allowedTypes.has(input.contentType)) throw new HttpError(415, "unsupported_file", "This file type is not supported.");
+  await assertMessage(context.env.DB, tenant.organizationId, input.ticketId, input.messageId);
+  const attachmentId = newId("att");
+  const payload = base64Url(new TextEncoder().encode(JSON.stringify({
+    attachmentId,
+    organizationId: tenant.organizationId,
+    userId: tenant.userId,
+    ticketId: input.ticketId,
+    messageId: input.messageId,
+    filename: safeFilename(input.filename),
+    contentType: input.contentType,
+    size: input.size,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  })));
+  const signature = await signValue(payload, context.env.SESSION_PEPPER);
+  const token = `${payload}.${signature}`;
+  return context.json({ upload: { attachmentId, url: `/api/attachments/intents/${token}`, method: "PUT", expiresIn: 600 } }, 201);
+});
+
+attachmentRoutes.put("/intents/:token", async (context) => {
+  const tenant = context.get("tenant");
+  const [payload, signature] = context.req.param("token").split(".");
+  if (!payload || !signature || !constantTimeEqual(signature, await signValue(payload, context.env.SESSION_PEPPER))) throw new HttpError(401, "invalid_upload_token", "The upload link is invalid.");
+  let intent: UploadIntent;
+  try { intent = JSON.parse(new TextDecoder().decode(fromBase64Url(payload))) as UploadIntent; }
+  catch { throw new HttpError(400, "invalid_upload_token", "The upload link is malformed."); }
+  if (intent.expiresAt < Date.now() || intent.organizationId !== tenant.organizationId || intent.userId !== tenant.userId) throw new HttpError(403, "expired_upload_token", "The upload link has expired.");
+  const contentLength = Number(context.req.header("content-length"));
+  if (contentLength !== intent.size) throw new HttpError(400, "upload_size_mismatch", "The uploaded file size does not match the upload intent.");
+  if (context.req.header("content-type") !== intent.contentType || !context.req.raw.body) throw new HttpError(415, "mime_mismatch", "The uploaded content type does not match the upload intent.");
+  await assertMessage(context.env.DB, tenant.organizationId, intent.ticketId, intent.messageId);
+  const objectKey = `${tenant.organizationId}/${intent.attachmentId}/${crypto.randomUUID()}`;
+  await context.env.ATTACHMENTS.put(objectKey, context.req.raw.body, { httpMetadata: { contentType: intent.contentType }, customMetadata: { attachmentId: intent.attachmentId } });
+  const object = await context.env.ATTACHMENTS.get(objectKey);
+  if (!object) throw new HttpError(500, "upload_failed", "The uploaded object could not be verified.");
+  const body = await object.arrayBuffer();
+  if (body.byteLength !== intent.size || !matchesSignature(new Uint8Array(body), intent.contentType)) {
+    await context.env.ATTACHMENTS.delete(objectKey);
+    throw new HttpError(415, "mime_mismatch", "The file contents do not match its declared type.");
+  }
+  const checksum = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", body)));
+  try {
+    await createDb(context.env.DB).insert(attachments).values({ id: intent.attachmentId, organizationId: tenant.organizationId, ticketId: intent.ticketId, messageId: intent.messageId, objectKey, filename: intent.filename, contentType: intent.contentType, size: intent.size, checksum, uploadedByUserId: tenant.userId });
+  } catch (error) {
+    await context.env.ATTACHMENTS.delete(objectKey);
+    throw error;
+  }
+  return context.json({ attachment: { id: intent.attachmentId, filename: intent.filename, contentType: intent.contentType, size: intent.size } }, 201);
+});
 
 attachmentRoutes.post("/", async (context) => {
   const tenant = context.get("tenant");
@@ -70,6 +126,13 @@ attachmentRoutes.get("/:id", async (context) => {
     },
   });
 });
+
+interface UploadIntent { attachmentId: string; organizationId: string; userId: string; ticketId: string; messageId: string; filename: string; contentType: string; size: number; expiresAt: number }
+
+async function assertMessage(database: D1Database, organizationId: string, ticketId: string, messageId: string) {
+  const message = await database.prepare("SELECT 1 FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id WHERE m.organization_id = ? AND m.ticket_id = ? AND m.id = ?").bind(organizationId, ticketId, messageId).first();
+  if (!message) throw new HttpError(404, "message_not_found", "Conversation message not found.");
+}
 
 function safeFilename(name: string) {
   return [...name].map((character) => {

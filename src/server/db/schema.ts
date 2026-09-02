@@ -14,6 +14,24 @@ export const organizations = sqliteTable("organizations", {
   ...timestamps,
 });
 
+export const inboxes = sqliteTable(
+  "inboxes",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    emailAddress: text("email_address").notNull(),
+    provider: text("provider", { enum: ["cloudflare_email", "development"] }).notNull().default("cloudflare_email"),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    disabledAt: integer("disabled_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("inboxes_email_address_uidx").on(table.emailAddress),
+    index("inboxes_organization_idx").on(table.organizationId),
+  ],
+);
+
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
@@ -109,11 +127,19 @@ export const tickets = sqliteTable(
     organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
     number: integer("number").notNull(),
     customerId: text("customer_id").notNull().references(() => customers.id, { onDelete: "restrict" }),
+    inboxId: text("inbox_id").references(() => inboxes.id, { onDelete: "set null" }),
     subject: text("subject").notNull(),
     status: text("status", { enum: ["open", "pending", "waiting_customer", "resolved", "closed"] }).notNull().default("open"),
     priority: text("priority", { enum: ["low", "normal", "high", "urgent"] }).notNull().default("normal"),
     assignedUserId: text("assigned_user_id").references(() => users.id, { onDelete: "set null" }),
+    assignedTeamId: text("assigned_team_id"),
     normalizedSearch: text("normalized_search").notNull().default(""),
+    lastMessagePreview: text("last_message_preview").notNull().default(""),
+    messageCount: integer("message_count").notNull().default(0),
+    lastCustomerReplyAt: integer("last_customer_reply_at", { mode: "timestamp_ms" }),
+    lastAgentReplyAt: integer("last_agent_reply_at", { mode: "timestamp_ms" }),
+    waitingSince: integer("waiting_since", { mode: "timestamp_ms" }),
+    version: integer("version").notNull().default(1),
     lastReplyAt: integer("last_reply_at", { mode: "timestamp_ms" }),
     resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
     closedAt: integer("closed_at", { mode: "timestamp_ms" }),
@@ -125,6 +151,8 @@ export const tickets = sqliteTable(
     index("tickets_organization_assignee_status_idx").on(table.organizationId, table.assignedUserId, table.status),
     index("tickets_organization_customer_idx").on(table.organizationId, table.customerId),
     index("tickets_organization_priority_idx").on(table.organizationId, table.priority),
+    index("tickets_organization_updated_id_idx").on(table.organizationId, table.updatedAt, table.id),
+    index("tickets_organization_inbox_status_idx").on(table.organizationId, table.inboxId, table.status),
   ],
 );
 
@@ -155,13 +183,154 @@ export const messages = sqliteTable(
     bodyHtml: text("body_html"),
     normalizedSearch: text("normalized_search").notNull().default(""),
     providerMessageId: text("provider_message_id"),
+    clientMessageId: text("client_message_id"),
     deliveryStatus: text("delivery_status", { enum: ["received", "queued", "sent", "failed"] }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
     index("messages_organization_ticket_created_idx").on(table.organizationId, table.ticketId, table.createdAt),
-    index("messages_organization_provider_idx").on(table.organizationId, table.providerMessageId),
+    uniqueIndex("messages_organization_provider_uidx").on(table.organizationId, table.providerMessageId),
+    uniqueIndex("messages_organization_client_uidx").on(table.organizationId, table.clientMessageId),
   ],
+);
+
+export const inboundMailEvents = sqliteTable(
+  "inbound_mail_events",
+  {
+    id: text("id").primaryKey(),
+    inboxId: text("inbox_id").references(() => inboxes.id, { onDelete: "set null" }),
+    organizationId: text("organization_id").references(() => organizations.id, { onDelete: "cascade" }),
+    stagingObjectKey: text("staging_object_key").notNull().unique(),
+    providerMessageId: text("provider_message_id"),
+    status: text("status", { enum: ["staged", "processing", "completed", "failed"] }).notNull().default("staged"),
+    messageId: text("message_id").references(() => messages.id, { onDelete: "set null" }),
+    attachmentCursor: integer("attachment_cursor").notNull().default(0),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("inbound_events_inbox_provider_uidx").on(table.inboxId, table.providerMessageId),
+    index("inbound_events_status_updated_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const outboundMailJobs = sqliteTable(
+  "outbound_mail_jobs",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    messageId: text("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    status: text("status", { enum: ["pending", "processing", "sent", "failed"] }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }).notNull(),
+    providerMessageId: text("provider_message_id"),
+    lastError: text("last_error"),
+    sentAt: integer("sent_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("outbound_jobs_message_uidx").on(table.messageId),
+    index("outbound_jobs_status_next_idx").on(table.status, table.nextAttemptAt),
+  ],
+);
+
+export const providerWebhookEvents = sqliteTable(
+  "provider_webhook_events",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull(),
+    externalEventId: text("external_event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    processedAt: integer("processed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("provider_webhook_event_uidx").on(table.provider, table.externalEventId)],
+);
+
+export const ticketReadStates = sqliteTable(
+  "ticket_read_states",
+  {
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    ticketId: text("ticket_id").notNull().references(() => tickets.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    lastReadAt: integer("last_read_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ticketId, table.userId] }),
+    index("ticket_read_states_org_user_idx").on(table.organizationId, table.userId),
+  ],
+);
+
+export const ticketDrafts = sqliteTable(
+  "ticket_drafts",
+  {
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    ticketId: text("ticket_id").notNull().references(() => tickets.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["message", "internal_note"] }).notNull().default("message"),
+    body: text("body").notNull().default(""),
+    revision: integer("revision").notNull().default(1),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [primaryKey({ columns: [table.ticketId, table.userId] })],
+);
+
+export const teams = sqliteTable(
+  "teams",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex("teams_organization_name_uidx").on(table.organizationId, table.name)],
+);
+
+export const teamMembers = sqliteTable(
+  "team_members",
+  {
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    teamId: text("team_id").notNull().references(() => teams.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.teamId, table.userId] }),
+    index("team_members_org_user_idx").on(table.organizationId, table.userId),
+  ],
+);
+
+export const savedViews = sqliteTable(
+  "saved_views",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id").references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    visibility: text("visibility", { enum: ["personal", "shared"] }).notNull().default("personal"),
+    filters: text("filters", { mode: "json" }).$type<Record<string, unknown>>().notNull().default({}),
+    ...timestamps,
+  },
+  (table) => [index("saved_views_organization_owner_idx").on(table.organizationId, table.ownerUserId)],
+);
+
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    ticketId: text("ticket_id").references(() => tickets.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("notifications_org_user_read_idx").on(table.organizationId, table.userId, table.readAt)],
 );
 
 export const tags = sqliteTable(

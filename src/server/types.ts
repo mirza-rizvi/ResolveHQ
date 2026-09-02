@@ -8,11 +8,13 @@ export interface AppBindings {
   APP_URL: string;
   SESSION_PEPPER: string;
   DEV_MAIL_MODE: "capture" | "disabled";
+  RESEND_API_KEY?: string;
+  RESEND_WEBHOOK_SECRET?: string;
 }
 
 export type MailQueueMessage =
-  | { kind: "inbound-mail"; from: string; to: string; raw: ArrayBuffer }
-  | { kind: "outbound-mail"; organizationId: string; messageId: string };
+  | { kind: "inbound-mail"; eventId: string; stagingObjectKey: string; from: string; to: string }
+  | { kind: "outbound-mail"; jobId: string };
 
 export type Role = "owner" | "admin" | "agent";
 
@@ -26,6 +28,7 @@ export interface TenantContext {
 
 export type AppVariables = {
   tenant: TenantContext;
+  requestId: string;
 };
 
 export type HonoEnv = { Bindings: AppBindings; Variables: AppVariables };

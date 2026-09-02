@@ -1,0 +1,24 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { CheckCircle2, Mail, ShieldCheck } from "lucide-react";
+import { useAuth } from "@/web/auth";
+import { Button, Input } from "@/web/components/ui";
+import { api } from "@/web/lib/api";
+
+interface SettingsData { workspace: { id: string; name: string; slug: string }; inboxes: Array<{ id: string; name: string; emailAddress: string; provider: string; isDefault: boolean; disabledAt: string | null }>; mail: { resendConfigured: boolean; webhookConfigured: boolean } }
+
+export function SettingsPage() {
+  const { session } = useAuth();
+  const [data, setData] = useState<SettingsData | null>(null); const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  const load = () => api<SettingsData>("/organization/settings").then(setData);
+  useEffect(() => { void load(); }, []);
+  async function saveWorkspace(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setError(""); const name = String(new FormData(event.currentTarget).get("name")); try { await api("/organization/settings", { method: "PATCH", body: JSON.stringify({ name }) }); setMessage("Workspace name saved."); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Workspace could not be saved."); } }
+  async function addInbox(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setError(""); const form = event.currentTarget; try { await api("/organization/inboxes", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) }); form.reset(); setMessage("Inbox added. Route this address to the ResolveHQ Worker in Cloudflare Email Routing."); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Inbox could not be added."); } }
+  if (!data) return <div className="standard-page"><div className="route-loading" aria-label="Loading settings" /></div>;
+  const canManage = session?.role !== "agent";
+  return <div className="standard-page"><header className="page-header"><div><h1>Workspace settings</h1><p>Identity, support inboxes, and production mail readiness.</p></div></header>
+    {message && <p className="settings-success"><CheckCircle2 size={15} />{message}</p>}{error && <p className="page-error">{error}</p>}
+    <section className="settings-section"><div><h2>Workspace identity</h2><p>The name agents see throughout ResolveHQ.</p></div><form onSubmit={saveWorkspace}><label>Name<Input name="name" defaultValue={data.workspace.name} disabled={!canManage} required /></label><label>Slug<Input value={data.workspace.slug} disabled /></label>{canManage && <Button type="submit">Save workspace</Button>}</form></section>
+    <section className="settings-section"><div><h2><Mail size={18} />Support inboxes</h2><p>Each address is globally unique and resolves to this tenant server-side.</p></div><div className="settings-inboxes">{data.inboxes.map((inbox) => <article key={inbox.id}><div><strong>{inbox.name}</strong><small>{inbox.emailAddress}</small></div><span>{inbox.disabledAt ? "Disabled" : inbox.isDefault ? "Default" : "Active"}</span></article>)}{canManage && <form onSubmit={addInbox}><Input name="name" placeholder="Billing support" required /><Input name="emailAddress" type="email" placeholder="billing@example.com" required /><Button type="submit">Add inbox</Button></form>}</div></section>
+    <section className="settings-section"><div><h2><ShieldCheck size={18} />Mail delivery</h2><p>Secrets remain Worker bindings and are never returned to the browser.</p></div><dl className="readiness-list"><div><dt>Resend API key</dt><dd>{data.mail.resendConfigured ? "Configured" : "Missing"}</dd></div><div><dt>Signed webhook</dt><dd>{data.mail.webhookConfigured ? "Configured" : "Missing"}</dd></div></dl></section>
+  </div>;
+}

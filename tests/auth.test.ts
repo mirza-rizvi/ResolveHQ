@@ -12,6 +12,15 @@ describe("authentication", () => {
     expect(await verifyPassword("wrong password", first, env.SESSION_PEPPER)).toBe(false);
   });
 
+  it("keeps the documented local demo credential in sync with the seed", async () => {
+    const seededHash = "pbkdf2-sha256$310000$5YVp6WPqIjWJg4XXdTp-hg$tBZNVDTyqpuZWFVeu3sjpTjVX-05QRkhCDw5HLI-Guk";
+    expect(await verifyPassword(
+      "resolve-demo-2026",
+      seededHash,
+      "replace-with-at-least-32-random-characters",
+    )).toBe(true);
+  });
+
   it("creates an owner session and rejects mutation without CSRF", async () => {
     const session = await signup("auth");
     const me = await request("/auth/me", {}, session);

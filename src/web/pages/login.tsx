@@ -21,10 +21,10 @@ export function LoginPage() {
     finally { setSubmitting(false); }
   }
   return <AuthSurface>
-    <div className="auth-heading"><h1>Continue the conversation.</h1><p>Sign in to your team’s support workspace.</p></div>
+    <div className="auth-heading"><h1>Sign in to ResolveHQ</h1><p>Continue to your team’s support workspace.</p></div>
     <form onSubmit={submit} className="auth-form">
-      <label>Email<Input name="email" type="email" autoComplete="email" defaultValue="owner@northstarlabs.test" required /></label>
-      <label>Password<Input name="password" type="password" autoComplete="current-password" defaultValue="resolve-demo-2026" minLength={12} required /></label>
+      <label>Email<Input name="email" type="email" autoComplete="email" required /></label>
+      <label>Password<Input name="password" type="password" autoComplete="current-password" minLength={12} required /></label>
       {error && <p className="form-error" role="alert">{error}</p>}
       <Button disabled={submitting} type="submit">{submitting ? "Signing in…" : "Sign in"}<ArrowRight size={16} /></Button>
     </form>
@@ -33,5 +33,5 @@ export function LoginPage() {
 }
 
 export function AuthSurface({ children }: { children: React.ReactNode }) {
-  return <main className="auth-surface"><section className="auth-panel"><Link className="auth-brand" to="/">ResolveHQ</Link>{children}</section><aside className="auth-aside"><blockquote>“A support queue should feel like a clear handoff, not another place work goes to hide.”</blockquote><p>Built for small teams who care about every reply.</p></aside></main>;
+  return <main className="auth-surface"><section className="auth-panel"><Link className="auth-brand" to="/">ResolveHQ</Link>{children}</section><aside className="auth-aside" aria-hidden="true"><span>Support operations, without the overhead.</span><ol><li>Prioritize the queue</li><li>Keep customer context close</li><li>Resolve work together</li></ol></aside></main>;
 }

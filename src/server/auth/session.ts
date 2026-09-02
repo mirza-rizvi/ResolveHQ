@@ -48,6 +48,7 @@ export async function resolveTenant(context: Context<HonoEnv>): Promise<TenantCo
   const [result] = await db
     .select({
       sessionId: sessions.id,
+      lastSeenAt: sessions.lastSeenAt,
       csrfTokenHash: sessions.csrfTokenHash,
       userId: users.id,
       organizationId: organizations.id,
@@ -72,7 +73,7 @@ export async function resolveTenant(context: Context<HonoEnv>): Promise<TenantCo
   const csrfToken = getCookie(context, CSRF_COOKIE) ?? "";
   if (!csrfToken || await sha256(`${csrfToken}.${context.env.SESSION_PEPPER}`) !== result.csrfTokenHash) return null;
 
-  if (Math.random() < 0.05) {
+  if (now.getTime() - result.lastSeenAt.getTime() >= 60 * 60 * 1000) {
     const touchSession = db.update(sessions).set({ lastSeenAt: now }).where(eq(sessions.id, result.sessionId));
     try {
       context.executionCtx.waitUntil(touchSession);

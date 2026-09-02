@@ -23,7 +23,7 @@ export interface IncomingMailProvider {
 }
 
 export interface OutgoingMailProvider {
-  send(message: OutgoingMail): Promise<{ providerMessageId: string }>;
+  send(message: OutgoingMail, options?: { idempotencyKey?: string }): Promise<{ providerMessageId: string }>;
 }
 
 export class DevelopmentMailProvider implements OutgoingMailProvider {
@@ -32,6 +32,32 @@ export class DevelopmentMailProvider implements OutgoingMailProvider {
   async send(message: OutgoingMail) {
     this.messages.push(structuredClone(message));
     return { providerMessageId: `dev_${crypto.randomUUID()}` };
+  }
+}
+
+export class ResendMailProvider implements OutgoingMailProvider {
+  constructor(private readonly apiKey: string) {}
+
+  async send(message: OutgoingMail, options?: { idempotencyKey?: string }) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.apiKey}`,
+        "content-type": "application/json",
+        ...(options?.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}),
+      },
+      body: JSON.stringify({
+        from: message.from,
+        to: [message.to],
+        subject: message.subject,
+        text: message.text,
+        ...(message.html ? { html: message.html } : {}),
+        ...(message.replyToMessageId ? { headers: { "In-Reply-To": message.replyToMessageId, References: message.replyToMessageId } } : {}),
+      }),
+    });
+    const result = await response.json().catch(() => ({})) as { id?: string; message?: string };
+    if (!response.ok || !result.id) throw new Error(`Resend rejected the email: ${result.message ?? response.status}.`);
+    return { providerMessageId: result.id };
   }
 }
 

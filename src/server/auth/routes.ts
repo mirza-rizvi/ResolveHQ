@@ -128,12 +128,41 @@ authRoutes.get("/me", requireAuth, async (context) => {
     .where(eq(users.id, tenant.userId))
     .limit(1);
   if (!result) throw new HttpError(401, "unauthenticated", "Sign in to continue.");
+  const workspaceRows = await db.select({ id: organizations.id, name: organizations.name, slug: organizations.slug, role: organizationMemberships.role }).from(organizationMemberships).innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId)).where(and(eq(organizationMemberships.userId, tenant.userId), isNull(organizationMemberships.disabledAt)));
   return context.json({
     user: { id: result.userId, email: result.email, name: result.name },
     organization: { id: tenant.organizationId, name: result.organizationName, slug: result.organizationSlug },
     role: tenant.role,
     csrfToken: tenant.csrfToken,
+    workspaces: workspaceRows,
   });
+});
+
+authRoutes.post("/switch-workspace", requireAuth, zValidator("json", z.object({ organizationId: z.string().min(1) })), async (context) => {
+  const tenant = context.get("tenant");
+  const organizationId = context.req.valid("json").organizationId;
+  const membership = await createDb(context.env.DB).select({ id: organizations.id }).from(organizationMemberships).innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId)).where(and(eq(organizationMemberships.userId, tenant.userId), eq(organizationMemberships.organizationId, organizationId), isNull(organizationMemberships.disabledAt))).limit(1).then((rows) => rows[0]);
+  if (!membership) throw new HttpError(404, "workspace_not_found", "Workspace not found.");
+  const token = getCookie(context, SESSION_COOKIE);
+  if (!token) throw new HttpError(401, "unauthenticated", "Sign in to continue.");
+  const tokenHash = await sha256(`${token}.${context.env.SESSION_PEPPER}`);
+  await createDb(context.env.DB).update(sessions).set({ organizationId, lastSeenAt: new Date() }).where(and(eq(sessions.tokenHash, tokenHash), eq(sessions.userId, tenant.userId)));
+  return context.json({ ok: true, organizationId });
+});
+
+authRoutes.get("/sessions", requireAuth, async (context) => {
+  const tenant = context.get("tenant");
+  const token = getCookie(context, SESSION_COOKIE);
+  const currentHash = token ? await sha256(`${token}.${context.env.SESSION_PEPPER}`) : "";
+  const rows = await createDb(context.env.DB).select({ id: sessions.id, userAgent: sessions.userAgent, lastSeenAt: sessions.lastSeenAt, createdAt: sessions.createdAt, expiresAt: sessions.expiresAt, tokenHash: sessions.tokenHash }).from(sessions).where(eq(sessions.userId, tenant.userId));
+  return context.json({ sessions: rows.map(({ tokenHash, ...session }) => ({ ...session, current: tokenHash === currentHash })) });
+});
+
+authRoutes.delete("/sessions/:id", requireAuth, async (context) => {
+  const tenant = context.get("tenant");
+  const result = await createDb(context.env.DB).delete(sessions).where(and(eq(sessions.id, context.req.param("id")), eq(sessions.userId, tenant.userId)));
+  if (!result.meta.changes) throw new HttpError(404, "session_not_found", "Session not found.");
+  return context.body(null, 204);
 });
 
 authRoutes.post("/logout", requireAuth, async (context) => {

@@ -8,9 +8,9 @@ ResolveHQ ships as one Cloudflare Worker. Hono owns `/api/*`, inbound email, que
 Browser ──HTTPS──> Worker/Hono ──> D1
                          │         relational source of truth
                          ├───────> R2 via StorageProvider
-Incoming mail ──> Worker email() ──> Queue ──> ticket/message services
-Replies ────────> Queue ──> OutgoingMailProvider
-Cron ───────────> expired sessions/invites and maintenance
+Incoming mail ──> Worker email() ──> R2 staging ──> Queue pointer ──> ticket/message services
+Replies ────────> D1 outbox ──> Queue ──> OutgoingMailProvider
+Cron ───────────> outbox reconciliation, expired sessions/invites, and maintenance
 ```
 
 ## Trust boundaries
@@ -37,7 +37,7 @@ Cron ───────────> expired sessions/invites and maintenance
 
 `StorageProvider` exposes validated object put/get/delete operations. The Cloudflare implementation uses R2; a future S3-compatible implementation can replace it without changing ticket services.
 
-`IncomingMailProvider` normalizes raw MIME into an inbound support message. The queue consumer resolves the exact organization by its configured support address, de-duplicates provider message IDs, links replies by `In-Reply-To` or ticket number, and validates accepted attachments before R2 storage. `OutgoingMailProvider` sends a reply envelope and returns a provider message ID. The development adapter captures mail deterministically; production delivery requires a provider adapter.
+`IncomingMailProvider` normalizes raw MIME into an inbound support message. The email handler first streams RFC822 to a randomized R2 staging key; Queues receive only the event ID and object key. The consumer resolves a globally unique inbox, de-duplicates provider message IDs, checkpoints attachment progress, and only links replies when `In-Reply-To` matches the same inbox and customer. Visible ticket numbers are never trusted for threading. `OutgoingMailProvider` sends a reply envelope and returns a provider message ID. The production Resend adapter uses deterministic idempotency keys; signed webhooks are replay-protected by `svix-id`.
 
 `AIProvider` exposes optional summarize, draft, classify, sentiment, similar-ticket, and tag suggestions. The default provider reports that AI is unavailable; core workflows never depend on it.
 
@@ -47,8 +47,12 @@ Organizations are the tenant boundary. Users may belong to more than one organiz
 
 ## Async behavior
 
-Inbound and outbound email payloads contain opaque IDs or raw RFC 822 mail, never session credentials or provider secrets. Queue consumers resolve current tenant data before acting. Inbound retries are idempotent through provider message IDs; outbound jobs stop once their message is marked sent.
+Queue payloads contain only opaque event/job IDs and R2 object keys, never raw mail, session credentials, or provider secrets. Inbound retries are idempotent through event checkpoints, unique provider message IDs, deterministic attachment keys, and an attachment cursor. Outbound jobs live in a D1 outbox, stop once sent, back off after failure, and are re-enqueued by Cron. Exhausted Queue retries flow to dedicated dead-letter queues.
 
 ## Search
 
-The MVP uses tenant-scoped indexed SQL with normalized search text on tickets, customers, messages, and tags. The search service owns the query strategy so D1 FTS can be introduced later without changing API contracts.
+Ticket search uses tenant-scoped D1 FTS5 with prefix queries across ticket number, subject, customer identity, messages, and tags. Writes refresh one ticket's search document. Ticket and customer lists use bounded keyset cursors instead of offsets; ticket hot-path metadata avoids joining the message table for routine inbox loads.
+
+## Consistency and concurrency
+
+Tickets carry an integer `version`. Clients include it with mutations and receive `409 ticket_version_conflict` when another session won the update. Agent drafts have monotonically increasing revisions, message submissions accept a client idempotency ID, and opening a conversation updates the user's tenant-scoped read state.

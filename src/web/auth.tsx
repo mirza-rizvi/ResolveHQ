@@ -7,6 +7,7 @@ export interface Session {
   organization: { id: string; name: string; slug: string };
   role: "owner" | "admin" | "agent";
   csrfToken: string;
+  workspaces?: Array<{ id: string; name: string; slug: string; role: "owner" | "admin" | "agent" }>;
 }
 
 const AuthContext = createContext<{ session: Session | null; loading: boolean; refresh: () => Promise<void>; logout: () => Promise<void> } | null>(null);

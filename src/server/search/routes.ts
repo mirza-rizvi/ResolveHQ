@@ -1,8 +1,8 @@
-import { and, desc, eq, like, or } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
-import { customers, messages, tickets } from "resolve-server/db/schema";
+import { customers, tickets } from "resolve-server/db/schema";
 import type { HonoEnv } from "resolve-server/types";
 
 export const searchRoutes = new Hono<HonoEnv>();
@@ -11,20 +11,15 @@ searchRoutes.get("/", async (context) => {
   const tenant = context.get("tenant");
   const query = context.req.query("q")?.trim().toLowerCase() ?? "";
   if (query.length < 2) return context.json({ results: [] });
-  const pattern = `%${query.replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+  const ftsQuery = query.split(/\s+/).map((term) => term.replace(/[^a-z0-9@._-]/gi, "")).filter(Boolean).slice(0, 8).map((term) => `"${term}"*`).join(" AND ");
+  if (!ftsQuery) return context.json({ results: [] });
   const db = createDb(context.env.DB);
   const rows = await db.select({
     id: tickets.id, number: tickets.number, subject: tickets.subject, status: tickets.status, priority: tickets.priority,
     customerName: customers.name, customerEmail: customers.email, updatedAt: tickets.updatedAt,
   }).from(tickets)
     .innerJoin(customers, and(eq(customers.id, tickets.customerId), eq(customers.organizationId, tenant.organizationId)))
-    .leftJoin(messages, and(eq(messages.ticketId, tickets.id), eq(messages.organizationId, tenant.organizationId)))
-    .where(and(eq(tickets.organizationId, tenant.organizationId), or(
-      like(tickets.normalizedSearch, pattern),
-      like(customers.normalizedSearch, pattern),
-      like(messages.normalizedSearch, pattern),
-    )))
-    .groupBy(tickets.id)
+    .where(and(eq(tickets.organizationId, tenant.organizationId), sql`${tickets.id} in (select ticket_id from ticket_search where organization_id = ${tenant.organizationId} and ticket_search match ${ftsQuery})`))
     .orderBy(desc(tickets.updatedAt))
     .limit(50);
   return context.json({ results: rows });

@@ -8,6 +8,13 @@
       "when": 1788212214870,
       "tag": "0000_gifted_scream",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788260400000,
+      "tag": "0001_operational_core",
+      "breakpoints": true
     }
   ]
 }

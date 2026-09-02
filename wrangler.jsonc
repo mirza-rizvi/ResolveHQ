@@ -43,8 +43,8 @@
       { "binding": "OUTBOUND_MAIL_QUEUE", "queue": "resolvehq-outbound-mail" }
     ],
     "consumers": [
-      { "queue": "resolvehq-inbound-mail", "max_batch_size": 5, "max_retries": 3 },
-      { "queue": "resolvehq-outbound-mail", "max_batch_size": 5, "max_retries": 3 }
+      { "queue": "resolvehq-inbound-mail", "max_batch_size": 5, "max_retries": 5, "dead_letter_queue": "resolvehq-inbound-mail-dlq" },
+      { "queue": "resolvehq-outbound-mail", "max_batch_size": 5, "max_retries": 5, "dead_letter_queue": "resolvehq-outbound-mail-dlq" }
     ]
   },
   "ratelimits": [
@@ -54,6 +54,6 @@
       "simple": { "limit": 10, "period": 60 }
     }
   ],
-  "triggers": { "crons": ["17 3 * * *"] },
+  "triggers": { "crons": ["*/5 * * * *"] },
   "vars": { "APP_URL": "http://localhost:5173", "DEV_MAIL_MODE": "capture" }
 }
