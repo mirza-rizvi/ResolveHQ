@@ -39,6 +39,7 @@ export const inboxes = sqliteTable(
   (table) => [
     uniqueIndex("inboxes_email_address_uidx").on(table.emailAddress),
     index("inboxes_organization_idx").on(table.organizationId),
+    index("inboxes_lower_email_idx").on(sql`lower(${table.emailAddress})`),
   ],
 );
 
@@ -146,6 +147,7 @@ export const customers = sqliteTable(
   (table) => [
     uniqueIndex("customers_organization_email_uidx").on(table.organizationId, table.email),
     index("customers_organization_name_idx").on(table.organizationId, table.name),
+    index("customers_created_id_idx").on(table.organizationId, table.createdAt, table.id),
     index("customers_organization_last_contact_idx").on(table.organizationId, table.lastContactedAt),
   ],
 );
@@ -188,6 +190,7 @@ export const tickets = sqliteTable(
     index("tickets_organization_status_updated_idx").on(table.organizationId, table.status, table.updatedAt),
     index("tickets_organization_assignee_status_idx").on(table.organizationId, table.assignedUserId, table.status),
     index("tickets_organization_customer_idx").on(table.organizationId, table.customerId),
+    index("tickets_customer_cursor_idx").on(table.organizationId, table.customerId, table.id),
     index("tickets_organization_priority_idx").on(table.organizationId, table.priority),
     index("tickets_organization_updated_id_idx").on(table.organizationId, table.updatedAt, table.id),
     index("tickets_organization_inbox_status_idx").on(table.organizationId, table.inboxId, table.status),
@@ -242,6 +245,10 @@ export const messages = sqliteTable(
   },
   (table) => [
     index("messages_organization_ticket_created_idx").on(table.organizationId, table.ticketId, table.createdAt),
+    index("messages_thread_cursor_idx").on(table.organizationId, table.ticketId, table.createdAt, table.id),
+    index("messages_orphan_queued_idx")
+      .on(table.createdAt, table.id)
+      .where(sql`${table.authorType} = 'agent' AND ${table.kind} = 'message' AND ${table.deliveryStatus} = 'queued'`),
     // Partial: a message without a provider/client/RFC id is not a duplicate of
     // every other message that lacks one.
     uniqueIndex("messages_organization_provider_uidx")
@@ -268,6 +275,13 @@ export const inboundMailEvents = sqliteTable(
       .notNull()
       .default("staged"),
     messageId: text("message_id").references(() => messages.id, { onDelete: "set null" }),
+    leaseUntil: integer("lease_until").notNull().default(0),
+    dispatchUntil: integer("dispatch_until").notNull().default(0),
+    terminalReason: text("terminal_reason"),
+    generation: integer("generation").notNull().default(0),
+    envelopeTo: text("envelope_to"),
+    envelopeFrom: text("envelope_from"),
+    nextAttemptAt: integer("next_attempt_at").notNull().default(0),
     attachmentCursor: integer("attachment_cursor").notNull().default(0),
     attempts: integer("attempts").notNull().default(0),
     lastError: text("last_error"),
@@ -300,6 +314,12 @@ export const outboundMailJobs = sqliteTable(
     nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }).notNull(),
     providerMessageId: text("provider_message_id"),
     lastError: text("last_error"),
+    leaseUntil: integer("lease_until").notNull().default(0),
+    dispatchUntil: integer("dispatch_until").notNull().default(0),
+    terminalReason: text("terminal_reason"),
+    generation: integer("generation").notNull().default(0),
+    firstAttemptAt: integer("first_attempt_at"),
+    envelope: text("envelope"),
     sentAt: integer("sent_at", { mode: "timestamp_ms" }),
     ...timestamps,
   },
@@ -307,6 +327,7 @@ export const outboundMailJobs = sqliteTable(
     uniqueIndex("outbound_jobs_message_uidx").on(table.messageId),
     index("outbound_jobs_status_next_idx").on(table.status, table.nextAttemptAt),
     index("outbound_jobs_provider_idx").on(table.providerMessageId),
+    index("outbound_jobs_stale_idx").on(table.status, table.updatedAt),
   ],
 );
 
@@ -513,6 +534,7 @@ export const attachments = sqliteTable(
     filename: text("filename").notNull(),
     contentType: text("content_type").notNull(),
     size: integer("size").notNull(),
+    cleanupClaimedAt: integer("cleanup_claimed_at"),
     checksum: text("checksum").notNull(),
     uploadedByUserId: text("uploaded_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -622,7 +644,10 @@ export const passwordResetTokens = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (table) => [index("password_reset_tokens_user_idx").on(table.userId)],
+  (table) => [
+    index("password_reset_tokens_user_idx").on(table.userId),
+    index("password_reset_tokens_expires_idx").on(table.expiresAt),
+  ],
 );
 
 export type Organization = typeof organizations.$inferSelect;
@@ -630,3 +655,44 @@ export type User = typeof users.$inferSelect;
 export type Customer = typeof customers.$inferSelect;
 export type Ticket = typeof tickets.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+
+export const maintenanceTasks = sqliteTable(
+  "maintenance_tasks",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    organizationId: text("organization_id"),
+    customerId: text("customer_id"),
+    cursor: text("cursor"),
+    generation: integer("generation").notNull().default(0),
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    leaseUntil: integer("lease_until").notNull().default(0),
+    dispatchUntil: integer("dispatch_until").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at").notNull().default(0),
+  },
+  (table) => [index("maintenance_due_idx").on(table.status, table.nextAttemptAt)],
+);
+
+export const attachmentUploads = sqliteTable(
+  "attachment_uploads",
+  {
+    id: text("id").primaryKey(),
+    objectKey: text("object_key").notNull(),
+    organizationId: text("organization_id").notNull(),
+    userId: text("user_id").notNull(),
+    ticketId: text("ticket_id").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("attachment_uploads_created_idx").on(table.createdAt)],
+);
+
+export const ticketSearchRows = sqliteTable(
+  "ticket_search_rows",
+  {
+    rowId: integer("row_id").primaryKey({ autoIncrement: true }),
+    organizationId: text("organization_id").notNull(),
+    ticketId: text("ticket_id").notNull(),
+  },
+  (table) => [uniqueIndex("ticket_search_rows_ticket_idx").on(table.organizationId, table.ticketId)],
+);

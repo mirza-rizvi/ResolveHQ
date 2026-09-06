@@ -53,6 +53,39 @@ const signupInput = credentials.extend({
 
 export const authRoutes = new Hono<HonoEnv>();
 
+authRoutes.use("*", async (context, next) => {
+  if (!context.env.SESSION_PEPPER || context.env.SESSION_PEPPER.length < 32)
+    throw new HttpError(503, "authentication_unavailable", "Authentication is not configured.");
+  const rate = Number(context.env.AUTH_TIMING_SAMPLE_RATE ?? 0);
+  const sampled = Number.isFinite(rate) && rate > 0 && Math.random() < Math.min(1, rate);
+  const timings: import("./password").AuthTiming[] | undefined = sampled ? [] : undefined;
+  context.set("authTimings", timings);
+  const started = sampled ? performance.now() : 0;
+  try {
+    await next();
+  } finally {
+    if (sampled)
+      console.info({
+        event: "auth_timing",
+        operation:
+          [
+            "login",
+            "signup",
+            "logout",
+            "me",
+            "forgot-password",
+            "reset-password",
+            "change-password",
+            "accept-invitation",
+          ].find((name) => context.req.path.endsWith(`/${name}`)) ?? "other",
+        status: context.res.status,
+        elapsedMs: performance.now() - started,
+        operations: timings,
+        clock: "elapsed_not_cpu",
+      });
+  }
+});
+
 authRoutes.post("/signup", validate("json", signupInput), async (context) => {
   const rate = await context.env.AUTH_RATE_LIMIT.limit({
     key: `signup:${context.req.header("cf-connecting-ip") ?? "local"}`,
@@ -77,7 +110,7 @@ authRoutes.post("/signup", validate("json", signupInput), async (context) => {
     id: userId,
     email: input.email,
     name: input.name,
-    passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER),
+    passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER, context.get("authTimings")),
   });
   const insertOrganization = db.insert(organizations).values({
     id: organizationId,
@@ -132,7 +165,9 @@ authRoutes.post("/login", validate("json", credentials), async (context) => {
   const ip = context.req.header("cf-connecting-ip") ?? "local";
   const input = context.req.valid("json");
   const rate = await context.env.AUTH_RATE_LIMIT.limit({ key: `login:${ip}:${input.email}` });
-  if (!rate.success) throw new HttpError(429, "rate_limited", "Too many sign-in attempts. Try again shortly.");
+  const byIp = await context.env.AUTH_RATE_LIMIT.limit({ key: `login:ip:${ip}` });
+  if (!rate.success || !byIp.success)
+    throw new HttpError(429, "rate_limited", "Too many sign-in attempts. Try again shortly.");
 
   const db = createDb(context.env.DB);
   const [result] = await db
@@ -156,7 +191,10 @@ authRoutes.post("/login", validate("json", credentials), async (context) => {
     .orderBy(asc(organizationMemberships.createdAt))
     .limit(1);
 
-  if (!result || !(await verifyPassword(input.password, result.passwordHash, context.env.SESSION_PEPPER))) {
+  if (
+    !result ||
+    !(await verifyPassword(input.password, result.passwordHash, context.env.SESSION_PEPPER, context.get("authTimings")))
+  ) {
     throw new HttpError(401, "invalid_credentials", "Email or password is incorrect.");
   }
 
@@ -172,6 +210,14 @@ authRoutes.post("/login", validate("json", credentials), async (context) => {
 
 authRoutes.post(
   "/accept-invitation",
+  async (context, next) => {
+    if (
+      !(await context.env.AUTH_RATE_LIMIT.limit({ key: `invite:${context.req.header("cf-connecting-ip") ?? "local"}` }))
+        .success
+    )
+      throw new HttpError(429, "rate_limited", "Too many requests. Try again shortly.");
+    await next();
+  },
   validate(
     "json",
     z.object({
@@ -245,7 +291,7 @@ authRoutes.post(
         id: userId,
         email: invitation.email,
         name: input.name,
-        passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER),
+        passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER, context.get("authTimings")),
       }),
       db
         .insert(organizationMemberships)
@@ -313,8 +359,8 @@ authRoutes.post(
             },
             appUrl,
           );
-        } catch (error) {
-          console.error("Password reset work failed", error);
+        } catch {
+          console.error({ event: "password_reset_failed" });
         }
       })();
       try {
@@ -348,7 +394,10 @@ authRoutes.post(
     await db.batch([
       db
         .update(users)
-        .set({ passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER), updatedAt: new Date() })
+        .set({
+          passwordHash: await hashPassword(input.password, context.env.SESSION_PEPPER, context.get("authTimings")),
+          updatedAt: new Date(),
+        })
         .where(eq(users.id, row.userId)),
       db.update(passwordResetTokens).set({ usedAt: new Date() }).where(eq(passwordResetTokens.id, row.id)),
       db.delete(sessions).where(eq(sessions.userId, row.userId)),
@@ -360,6 +409,11 @@ authRoutes.post(
 authRoutes.post(
   "/change-password",
   requireAuth,
+  async (context, next) => {
+    if (!(await context.env.AUTH_RATE_LIMIT.limit({ key: `change:${context.get("tenant").userId}` })).success)
+      throw new HttpError(429, "rate_limited", "Too many requests. Try again shortly.");
+    await next();
+  },
   validate("json", z.object({ currentPassword: z.string().min(1).max(128), newPassword: z.string().min(12).max(128) })),
   async (context) => {
     const tenant = context.get("tenant");
@@ -370,14 +424,25 @@ authRoutes.post(
       .from(users)
       .where(eq(users.id, tenant.userId))
       .limit(1);
-    if (!user || !(await verifyPassword(input.currentPassword, user.passwordHash, context.env.SESSION_PEPPER)))
+    if (
+      !user ||
+      !(await verifyPassword(
+        input.currentPassword,
+        user.passwordHash,
+        context.env.SESSION_PEPPER,
+        context.get("authTimings"),
+      ))
+    )
       throw new HttpError(401, "invalid_credentials", "Your current password is incorrect.");
     const token = getCookie(context, SESSION_COOKIE) ?? "";
     const currentHash = await sha256(`${token}.${context.env.SESSION_PEPPER}`);
     await db.batch([
       db
         .update(users)
-        .set({ passwordHash: await hashPassword(input.newPassword, context.env.SESSION_PEPPER), updatedAt: new Date() })
+        .set({
+          passwordHash: await hashPassword(input.newPassword, context.env.SESSION_PEPPER, context.get("authTimings")),
+          updatedAt: new Date(),
+        })
         .where(eq(users.id, tenant.userId)),
       db.delete(sessions).where(and(eq(sessions.userId, tenant.userId), ne(sessions.tokenHash, currentHash))),
     ]);

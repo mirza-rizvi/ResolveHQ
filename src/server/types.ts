@@ -1,5 +1,8 @@
 export interface AppBindings {
   DB: D1Database;
+  AUTH_TIMING_SAMPLE_RATE?: string;
+  MAINTENANCE_QUEUE?: Queue<MailQueueMessage>;
+  MAINTENANCE_DLQ?: Queue<MailQueueMessage>;
   ATTACHMENTS: R2Bucket;
   ASSETS: Fetcher;
   INBOUND_MAIL_QUEUE: Queue<MailQueueMessage>;
@@ -19,8 +22,9 @@ export interface AppBindings {
 }
 
 export type MailQueueMessage =
-  | { kind: "inbound-mail"; eventId: string; stagingObjectKey: string; from: string; to: string }
-  | { kind: "outbound-mail"; jobId: string };
+  | { kind: "inbound-mail"; eventId: string; stagingObjectKey: string; from?: string; to?: string }
+  | { kind: "outbound-mail"; jobId: string }
+  | { kind: "maintenance"; taskId: string };
 
 export type Role = "owner" | "admin" | "agent";
 
@@ -35,6 +39,7 @@ export interface TenantContext {
 export type AppVariables = {
   tenant: TenantContext;
   requestId: string;
+  authTimings?: import("./auth/password").AuthTiming[];
 };
 
 export type HonoEnv = { Bindings: AppBindings; Variables: AppVariables };

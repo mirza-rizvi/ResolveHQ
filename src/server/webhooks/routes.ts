@@ -34,24 +34,31 @@ webhookRoutes.post("/resend", async (context) => {
   )
     .bind(`pwe_${crypto.randomUUID()}`, eventId, event.type, body, now)
     .run();
-  if (!inserted.meta.changes) return context.json({ ok: true, duplicate: true });
+  if (!inserted.meta.changes) {
+    const prior = await context.env.DB.prepare(
+      "SELECT processed_at FROM provider_webhook_events WHERE provider = 'resend' AND external_event_id = ?",
+    )
+      .bind(eventId)
+      .first<{ processed_at: number | null }>();
+    if (prior?.processed_at != null) return context.json({ ok: true, duplicate: true });
+  }
 
   if (["email.bounced", "email.failed", "email.complained"].includes(event.type)) {
     // A provider message id is only unique within the tenant that sent it, so the
     // update is scoped to the message the owning outbound job points at.
     await context.env.DB.prepare(
-      "UPDATE messages SET delivery_status = ? WHERE id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ?) AND organization_id IN (SELECT organization_id FROM outbound_mail_jobs WHERE provider_message_id = ?)",
+      "UPDATE messages SET delivery_status = ? WHERE id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ? AND terminal_reason IS NULL) AND organization_id IN (SELECT organization_id FROM outbound_mail_jobs WHERE provider_message_id = ?)",
     )
       .bind("failed", event.data.email_id, event.data.email_id)
       .run();
     await context.env.DB.prepare(
-      "UPDATE outbound_mail_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE provider_message_id = ?",
+      "UPDATE outbound_mail_jobs SET status = 'failed', terminal_reason = CASE WHEN terminal_reason = 'email.complained' THEN terminal_reason ELSE ? END, last_error = ?, updated_at = ? WHERE provider_message_id = ?",
     )
-      .bind(`Resend event: ${event.type}`, now, event.data.email_id)
+      .bind(event.type, `Resend event: ${event.type}`, now, event.data.email_id)
       .run();
   } else if (["email.sent", "email.delivered"].includes(event.type)) {
     await context.env.DB.prepare(
-      "UPDATE messages SET delivery_status = ? WHERE id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ?) AND organization_id IN (SELECT organization_id FROM outbound_mail_jobs WHERE provider_message_id = ?)",
+      "UPDATE messages SET delivery_status = ? WHERE id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ? AND terminal_reason IS NULL) AND organization_id IN (SELECT organization_id FROM outbound_mail_jobs WHERE provider_message_id = ?)",
     )
       .bind("sent", event.data.email_id, event.data.email_id)
       .run();

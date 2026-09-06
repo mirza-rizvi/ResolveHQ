@@ -1,3 +1,4 @@
+import { MailRecovery } from "../components/mail-recovery";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { CheckCircle2, KeyRound, Mail, ShieldCheck, TriangleAlert } from "lucide-react";
 import { useAuth } from "@/web/auth";
@@ -214,6 +215,7 @@ export function SettingsPage() {
           </div>
         </dl>
       </section>
+      {canManage && <MailRecovery />}
       {(captures || captureError) && (
         <section className="settings-section">
           <div>

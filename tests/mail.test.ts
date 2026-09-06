@@ -1,3 +1,4 @@
+import { processMaintenance } from "../src/server/maintenance/service";
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { processInboundMail, processOutboundMail } from "resolve-server/mail/queue";
@@ -356,7 +357,7 @@ describe("mail queue workflow", () => {
       .bind(job!.id)
       .first<{ status: string; error: string }>();
     expect(jobState?.status).toBe("failed");
-    expect(jobState?.error).toContain("No support inbox");
+    expect(jobState?.error).toBe("inbox_missing");
     const messageState = await env.DB.prepare("SELECT delivery_status AS status FROM messages WHERE id = ?")
       .bind(reply.message.id)
       .first<{ status: string }>();
@@ -514,6 +515,7 @@ describe("scheduled mail recovery", () => {
       context,
     );
     await waitOnExecutionContext(context);
+    await processMaintenance(env as AppBindings, "cleanup/staging");
 
     const job = await env.DB.prepare(
       "SELECT status, last_error AS lastError FROM outbound_mail_jobs WHERE organization_id = ?",
@@ -589,6 +591,7 @@ describe("scheduled mail recovery", () => {
       context,
     );
     await waitOnExecutionContext(context);
+    await processMaintenance(env as AppBindings, "cleanup/staging");
 
     const job = await env.DB.prepare(
       "SELECT id, status, idempotency_key AS idempotencyKey FROM outbound_mail_jobs WHERE message_id = ?",
@@ -612,7 +615,7 @@ describe("scheduled mail recovery", () => {
     // Nothing was ever written to R2 under that key.
     await expect(
       processInboundMail(env as AppBindings, { eventId, stagingObjectKey, from: "", to: "" }),
-    ).rejects.toThrow("The staged inbound email is missing.");
+    ).rejects.toThrow("Inbound mail processing failed.");
     const row = await env.DB.prepare(
       "SELECT attempts, status, last_error AS lastError FROM inbound_mail_events WHERE id = ?",
     )
@@ -621,7 +624,7 @@ describe("scheduled mail recovery", () => {
     // Without the attempt landing here the cron would re-queue this row forever.
     expect(row?.attempts).toBe(1);
     expect(row?.status).toBe("failed");
-    expect(row?.lastError).toBe("The staged inbound email is missing.");
+    expect(row?.lastError).toBe("inbound_processing_failed");
   });
 });
 

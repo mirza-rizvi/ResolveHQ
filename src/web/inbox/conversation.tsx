@@ -11,6 +11,9 @@ interface ConversationPanelProps {
   loading: boolean;
   error: string;
   onRetry: () => void;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   members: Member[];
   teams: Team[];
   availableTags: Tag[];
@@ -37,6 +40,9 @@ export function ConversationPanel({
   loading,
   error,
   onRetry,
+  hasOlder,
+  loadingOlder,
+  onLoadOlder,
   members,
   teams,
   availableTags,
@@ -201,6 +207,11 @@ export function ConversationPanel({
             </div>
           </div>
           <div className="thread">
+            {hasOlder && (
+              <Button variant="secondary" onClick={onLoadOlder} disabled={loadingOlder}>
+                {loadingOlder ? "Loading…" : "Load older messages"}
+              </Button>
+            )}
             {conversation.messages.map((message) => (
               <ThreadMessage
                 key={message.id}

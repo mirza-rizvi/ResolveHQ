@@ -17,17 +17,17 @@ ResolveHQ is a Cloudflare-native, self-hostable helpdesk for small support teams
 
 ## How it works
 
-ResolveHQ runs as a single Cloudflare Worker in your own account. Hono serves both the REST API and the built React application. Cloudflare D1 holds tickets and customers, Cloudflare R2 holds attachments, and Cloudflare Queues carry inbound and outbound mail jobs. Cloudflare Email Routing delivers incoming mail to the Worker, and Resend sends outgoing mail. All of your data stays in your own Cloudflare account.
+ResolveHQ runs as a single Cloudflare Worker in your own account. Hono serves both the REST API and the built React application. Cloudflare D1 holds tickets and customers, Cloudflare R2 holds attachments, and Cloudflare Queues carry inbound and outbound mail jobs. Cloudflare Email Routing delivers incoming mail to the Worker, and Resend sends outgoing mail. Tickets and attachments are stored in your Cloudflare account; outbound email content passes through Resend.
 
 ## How much does it cost?
 
-D1 and R2 free tiers are ample for a small team, and Cloudflare Email Routing is free. Cloudflare Queues require a Workers Paid plan ($5/month), so ResolveHQ needs Workers Paid regardless of traffic. Resend's free tier covers up to 3,000 emails a month for outbound mail.
+ResolveHQ can run on Cloudflare’s Free plan for small deployments, provided usage stays within the current limits for Workers, D1, R2, Queues, Cron Triggers, and Email Routing. CPU-intensive authentication or mail parsing may require Workers Paid; benchmark your deployment. Queues are available on Workers Free. R2 requires account activation and billing setup separately. Resend handles outbound email under its own limits. See the [Free-plan audit](docs/cloudflare-free.md).
 
 ## Deploy
 
 The easiest way to get started is with the **Deploy to Cloudflare** button above. You will need:
 
-- A Cloudflare account on the Workers Paid plan (required for Queues).
+- A Cloudflare account; Workers Free supports Queues. Activate R2 separately.
 - A domain on Cloudflare, so you can set up Email Routing.
 - Optionally, a Resend account with a verified sending domain, to send outgoing mail.
 
@@ -39,7 +39,7 @@ See the [deployment guide](docs/deployment.md) for what the deploy flow provisio
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars
+cp .dev.vars.local.example .dev.vars
 npm run db:migrate:local
 npm run db:seed:local
 npm run dev

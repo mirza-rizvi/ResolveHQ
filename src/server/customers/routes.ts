@@ -1,4 +1,4 @@
-import { and, desc, eq, like, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "resolve-server/auth/middleware";
@@ -7,7 +7,7 @@ import { customers, tickets } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import { newId, normalizeSearch } from "resolve-server/lib/id";
-import { refreshTicketSearch } from "resolve-server/search/index";
+import { requestCustomerRefresh } from "../maintenance/service";
 import type { HonoEnv } from "resolve-server/types";
 
 const customerInput = z.object({
@@ -41,10 +41,8 @@ customerRoutes.get("/", async (context) => {
       phone: customers.phone,
       lastContactedAt: customers.lastContactedAt,
       createdAt: customers.createdAt,
-      ticketCount: sql<number>`count(${tickets.id})`,
     })
     .from(customers)
-    .leftJoin(tickets, and(eq(tickets.customerId, customers.id), eq(tickets.organizationId, tenant.organizationId)))
     .where(
       and(
         eq(customers.organizationId, tenant.organizationId),
@@ -57,11 +55,27 @@ customerRoutes.get("/", async (context) => {
           : undefined,
       ),
     )
-    .groupBy(customers.id)
     .orderBy(desc(customers.createdAt), desc(customers.id))
     .limit(limit + 1);
   const hasMore = rows.length > limit;
-  const items = rows.slice(0, limit);
+  const page = rows.slice(0, limit);
+  const counts = page.length
+    ? await db
+        .select({ customerId: tickets.customerId, count: sql<number>`count(*)` })
+        .from(tickets)
+        .where(
+          and(
+            eq(tickets.organizationId, tenant.organizationId),
+            inArray(
+              tickets.customerId,
+              page.map((row) => row.id),
+            ),
+          ),
+        )
+        .groupBy(tickets.customerId)
+    : [];
+  const totals = new Map(counts.map((row) => [row.customerId, row.count]));
+  const items = page.map((row) => ({ ...row, ticketCount: totals.get(row.id) ?? 0 }));
   const last = items.at(-1);
   const nextCursor =
     hasMore && last
@@ -146,11 +160,6 @@ customerRoutes.patch("/:id", validate("json", customerInput.partial()), async (c
       updatedAt: new Date(),
     })
     .where(and(eq(customers.id, current.id), eq(customers.organizationId, tenant.organizationId)));
-  const related = await db
-    .select({ id: tickets.id })
-    .from(tickets)
-    .where(and(eq(tickets.organizationId, tenant.organizationId), eq(tickets.customerId, current.id)))
-    .limit(50);
-  for (const ticket of related) await refreshTicketSearch(context.env.DB, tenant.organizationId, ticket.id);
+  await requestCustomerRefresh(context.env, tenant.organizationId, current.id);
   return context.json({ customer: { ...current, ...input } });
 });

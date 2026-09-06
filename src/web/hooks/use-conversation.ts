@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/web/components/toast";
 import type { Conversation, MessageKind } from "@/web/inbox/types";
 import { ApiError, api } from "@/web/lib/api";
@@ -15,9 +15,14 @@ export interface SendMessageInput {
 export function useConversation(ticketId?: string) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const query = useQuery({
+  const query = useInfiniteQuery({
     queryKey: ["conversation", ticketId],
-    queryFn: () => api<Conversation>(`/tickets/${ticketId}`),
+    queryFn: ({ pageParam }) =>
+      api<Conversation>(
+        `/tickets/${ticketId}?messageWindow=latest${pageParam ? `&messageCursor=${encodeURIComponent(pageParam)}` : ""}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextMessageCursor ?? undefined,
     enabled: Boolean(ticketId),
     refetchInterval: pollInterval,
   });
@@ -42,7 +47,7 @@ export function useConversation(ticketId?: string) {
     mutationFn: (changes: Record<string, unknown>) =>
       api(`/tickets/${ticketId}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...changes, version: query.data?.ticket.version }),
+        body: JSON.stringify({ ...changes, version: query.data?.pages[0].ticket.version }),
       }),
     onError,
     onSuccess: invalidate,
@@ -71,8 +76,30 @@ export function useConversation(ticketId?: string) {
     onSuccess: invalidate,
   });
 
+  const pages = query.data?.pages;
+  const conversation = pages?.length
+    ? {
+        ...pages[0],
+        messages: [
+          ...new Map(
+            [...pages]
+              .reverse()
+              .flatMap((page) => page.messages)
+              .map((message) => [message.id, message]),
+          ).values(),
+        ],
+        attachments: [
+          ...new Map(
+            pages.flatMap((page) => page.attachments).map((attachment) => [attachment.id, attachment]),
+          ).values(),
+        ],
+      }
+    : null;
   return {
-    conversation: query.data ?? null,
+    conversation,
+    hasOlder: query.hasNextPage,
+    loadingOlder: query.isFetchingNextPage,
+    loadOlder: () => void query.fetchNextPage(),
     error: query.error,
     isPending: Boolean(ticketId) && query.isPending,
     refetch: query.refetch,

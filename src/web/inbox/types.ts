@@ -47,6 +47,7 @@ export interface AttachmentSummary {
 }
 
 export interface Conversation {
+  nextMessageCursor?: string | null;
   ticket: TicketSummary & { customerCompany?: string | null; createdAt: string };
   messages: ThreadMessage[];
   tags: Tag[];

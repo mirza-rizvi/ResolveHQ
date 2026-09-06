@@ -1,3 +1,4 @@
+import { dispatchMail } from "../mail/reliability";
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -207,16 +208,14 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
       normalizedSearch: normalizeSearch(input.message),
       deliveryStatus: "queued",
     }),
-    db
-      .insert(outboundMailJobs)
-      .values({
-        id: outboundJobId,
-        organizationId: tenant.organizationId,
-        messageId,
-        idempotencyKey: `message/${messageId}`,
-        status: "pending",
-        nextAttemptAt: now,
-      }),
+    db.insert(outboundMailJobs).values({
+      id: outboundJobId,
+      organizationId: tenant.organizationId,
+      messageId,
+      idempotencyKey: `message/${messageId}`,
+      status: "pending",
+      nextAttemptAt: now,
+    }),
     db
       .update(customers)
       .set({ lastContactedAt: now, updatedAt: now })
@@ -230,7 +229,7 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
     entityId: ticketId,
     metadata: { number: numberRow.number },
   });
-  await context.env.OUTBOUND_MAIL_QUEUE.send({ kind: "outbound-mail", jobId: outboundJobId });
+  await dispatchMail(context.env, "outbound-mail", [outboundJobId]);
   return context.json(
     {
       ticket: {
@@ -294,7 +293,24 @@ ticketRoutes.get("/:id", async (context) => {
     .where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId)))
     .limit(1);
   if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
-  const [thread, tagRows, attachmentRows] = await Promise.all([
+  const latest = context.req.query("messageWindow") === "latest";
+  let before: { createdAt: number; id: string } | undefined;
+  if (latest && context.req.query("messageCursor")) {
+    try {
+      const parsed = JSON.parse(atob(context.req.query("messageCursor")!));
+      if (
+        !Number.isSafeInteger(parsed.createdAt) ||
+        Math.abs(parsed.createdAt) > 8.64e15 ||
+        typeof parsed.id !== "string" ||
+        parsed.id.length > 100
+      )
+        throw new Error();
+      before = parsed;
+    } catch {
+      throw new HttpError(400, "invalid_cursor", "Invalid message cursor.");
+    }
+  }
+  const [thread, tagRows] = await Promise.all([
     db
       .select({
         id: messages.id,
@@ -315,25 +331,58 @@ ticketRoutes.get("/:id", async (context) => {
         outboundMailJobs,
         and(eq(outboundMailJobs.messageId, messages.id), eq(outboundMailJobs.organizationId, tenant.organizationId)),
       )
-      .where(and(eq(messages.ticketId, ticket.id), eq(messages.organizationId, tenant.organizationId)))
-      .orderBy(asc(messages.createdAt))
-      .limit(50),
+      .where(
+        and(
+          eq(messages.ticketId, ticket.id),
+          eq(messages.organizationId, tenant.organizationId),
+          before
+            ? or(
+                lt(messages.createdAt, new Date(before.createdAt)),
+                and(eq(messages.createdAt, new Date(before.createdAt)), lt(messages.id, before.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(
+        latest ? desc(messages.createdAt) : asc(messages.createdAt),
+        latest ? desc(messages.id) : asc(messages.id),
+      )
+      .limit(latest ? 51 : 50),
     db
       .select({ id: tags.id, name: tags.name, color: tags.color })
       .from(ticketTags)
       .innerJoin(tags, and(eq(tags.id, ticketTags.tagId), eq(tags.organizationId, tenant.organizationId)))
       .where(and(eq(ticketTags.ticketId, ticket.id), eq(ticketTags.organizationId, tenant.organizationId))),
-    db
-      .select({
-        id: attachments.id,
-        messageId: attachments.messageId,
-        filename: attachments.filename,
-        contentType: attachments.contentType,
-        size: attachments.size,
-      })
-      .from(attachments)
-      .where(and(eq(attachments.ticketId, ticket.id), eq(attachments.organizationId, tenant.organizationId))),
   ]);
+  const page = thread.slice(0, 50);
+  const oldest = page.at(-1);
+  const nextMessageCursor =
+    latest && thread.length > 50 && oldest
+      ? btoa(JSON.stringify({ createdAt: oldest.createdAt.getTime(), id: oldest.id }))
+      : null;
+  const attachmentRows = await db
+    .select({
+      id: attachments.id,
+      messageId: attachments.messageId,
+      filename: attachments.filename,
+      contentType: attachments.contentType,
+      size: attachments.size,
+    })
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.ticketId, ticket.id),
+        eq(attachments.organizationId, tenant.organizationId),
+        latest
+          ? page.length
+            ? inArray(
+                attachments.messageId,
+                page.map((row) => row.id),
+              )
+            : sql`0`
+          : undefined,
+      ),
+    );
   await db
     .insert(ticketReadStates)
     .values({
@@ -346,7 +395,13 @@ ticketRoutes.get("/:id", async (context) => {
       target: [ticketReadStates.ticketId, ticketReadStates.userId],
       set: { lastReadAt: new Date() },
     });
-  return context.json({ ticket, messages: thread, tags: tagRows, attachments: attachmentRows });
+  return context.json({
+    ticket,
+    messages: latest ? page.reverse() : page,
+    tags: tagRows,
+    attachments: attachmentRows,
+    ...(latest ? { nextMessageCursor } : {}),
+  });
 });
 
 ticketRoutes.patch("/:id", validate("json", updateTicketInput), async (context) => {
@@ -447,6 +502,7 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
           eq(attachments.ticketId, ticket.id),
           eq(attachments.uploadedByUserId, tenant.userId),
           isNull(attachments.messageId),
+          isNull(attachments.cleanupClaimedAt),
           inArray(attachments.id, attachmentIds),
         ),
       );
@@ -511,8 +567,7 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
       metadata: { from: ticket.status, to: "waiting_customer" },
     });
   }
-  if (input.kind === "message")
-    await context.env.OUTBOUND_MAIL_QUEUE.send({ kind: "outbound-mail", jobId: outboundJobId });
+  if (input.kind === "message") await dispatchMail(context.env, "outbound-mail", [outboundJobId]);
   return context.json(
     {
       message: { id, ticketId: ticket.id, authorType: "agent", kind: input.kind, bodyText: input.body, createdAt: now },

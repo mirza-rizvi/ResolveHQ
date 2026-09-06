@@ -38,7 +38,7 @@ Cron ───────────> outbox reconciliation, expired sessions/
 
 `StorageProvider` exposes validated object put/get/delete operations. The Cloudflare implementation uses R2; a future S3-compatible implementation can replace it without changing ticket services.
 
-`IncomingMailProvider` normalizes raw MIME into an inbound support message. The email handler first streams RFC822 to a randomized R2 staging key; Queues receive only the event ID and object key. The consumer resolves a globally unique inbox, de-duplicates provider message IDs, checkpoints attachment progress, and only links replies when `In-Reply-To` matches the same inbox and customer. Visible ticket numbers are never trusted for threading. `OutgoingMailProvider` sends a reply envelope and returns a provider message ID. The production Resend adapter uses deterministic idempotency keys; signed webhooks are replay-protected by `svix-id`.
+`IncomingMailProvider` normalizes raw MIME into an inbound support message. The email handler records the envelope recipient and a durable staging reservation, then streams RFC822 to a randomized R2 staging key; Queues receive only the event ID and object key. The consumer resolves a globally unique inbox, de-duplicates provider message IDs, checkpoints attachment progress, and only links replies when `In-Reply-To` matches the same inbox and customer. Visible ticket numbers are never trusted for threading. `OutgoingMailProvider` sends a reply envelope and returns a provider message ID. The production Resend adapter uses deterministic idempotency keys; signed webhooks are replay-protected by `svix-id`.
 
 ### Threading
 
@@ -46,7 +46,7 @@ Every message carries two identifiers: `provider_message_id` (the outgoing mail 
 
 ### Cron recovery
 
-The scheduled handler (`worker.ts`, every 5 minutes) does the following, in order: expires sessions and unaccepted invitations; recovers `outbound_mail_jobs` and `inbound_mail_events` stuck in `processing` for more than 10 minutes back to `failed` so normal retry paths pick them up; re-enqueues `inbound_mail_events` that failed with staging objects still present (up to 5 attempts, 24-hour window); inserts a fallback `outbound_mail_jobs` row for any `queued` agent message whose job insert never landed, after a 2-minute grace period; sends any `pending`/`failed` outbound job whose `next_attempt_at` has arrived; deletes `_mail-staging/*` R2 objects for `inbound_mail_events` that finished (`completed` or `failed`) more than 7 days ago; and deletes orphaned attachments (`message_id IS NULL`) older than 1 day, object first, then row.
+The scheduled handler runs every five minutes. Each sweep touches at most 20 candidate rows: expired sessions, invitations and reset tokens; expired 20-minute mail leases; exhausted retries; and missing outbound outbox rows after a two-minute grace period. D1 dispatch reservations prevent repeated enqueueing while a delivery is in flight. Cleanup discovery creates durable maintenance tasks only when old objects exist; maintenance consumers process five objects or customer-search tickets per invocation. Raw staging objects become cleanup candidates after seven days; unlinked uploads and abandoned reservations after one day. See the [Free-plan audit](cloudflare-free.md) for retry windows, manual recovery, and remaining CPU limits.
 
 `AIProvider` exposes optional summarize, draft, classify, sentiment, similar-ticket, and tag suggestions. The default provider reports that AI is unavailable; core workflows never depend on it.
 
@@ -56,7 +56,7 @@ Organizations are the tenant boundary. Users may belong to more than one organiz
 
 ## Async behavior
 
-Queue payloads contain only opaque event/job IDs and R2 object keys, never raw mail, session credentials, or provider secrets. Inbound retries are idempotent through event checkpoints, unique provider message IDs, deterministic attachment keys, and an attachment cursor. Outbound jobs live in a D1 outbox, stop once sent, back off after failure, and are re-enqueued by Cron. Exhausted Queue retries flow to dedicated dead-letter queues.
+Queue payloads contain only opaque event/job IDs and R2 object keys, never raw mail, session credentials, or provider secrets. Inbound retries are idempotent through event checkpoints, unique provider message IDs, deterministic attachment keys, and an attachment cursor. Outbound jobs live in a D1 outbox, stop once sent, back off after failure, and are re-enqueued by Cron. Six actual failures stop automatic processing and retain D1 state; terminal jobs and exhausted Queue retries flow to dedicated dead-letter queues. Administrators review stopped mail in Settings. Outbound automatic retries keep a frozen envelope and key within a 23-hour window, and complaints cannot be resent.
 
 ## Search
 

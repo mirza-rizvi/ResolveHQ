@@ -1,3 +1,4 @@
+import { MailFailure } from "../mail/reliability";
 export interface IncomingMail {
   providerMessageId: string;
   from: { name?: string; email: string };
@@ -34,8 +35,10 @@ export class DevelopmentMailProvider implements OutgoingMailProvider {
     private readonly organizationId: string | null = null,
   ) {}
 
-  async send(message: OutgoingMail) {
-    const id = `dev_${crypto.randomUUID()}`;
+  async send(message: OutgoingMail, options?: { idempotencyKey?: string }) {
+    const id = options?.idempotencyKey
+      ? `dev_${this.organizationId ?? "system"}/${options.idempotencyKey}`
+      : `dev_${crypto.randomUUID()}`;
     const headers = {
       ...(message.messageId ? { "Message-ID": message.messageId } : {}),
       ...(message.references?.length
@@ -44,7 +47,7 @@ export class DevelopmentMailProvider implements OutgoingMailProvider {
     };
     await this.database
       .prepare(
-        "INSERT INTO mail_captures (id, organization_id, to_address, from_address, subject, text, html, headers, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO mail_captures (id, organization_id, to_address, from_address, subject, text, html, headers, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         id,
@@ -68,6 +71,7 @@ export class ResendMailProvider implements OutgoingMailProvider {
   async send(message: OutgoingMail, options?: { idempotencyKey?: string }) {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
+      signal: AbortSignal.timeout(15_000),
       headers: {
         authorization: `Bearer ${this.apiKey}`,
         "content-type": "application/json",
@@ -92,7 +96,12 @@ export class ResendMailProvider implements OutgoingMailProvider {
       }),
     });
     const result = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
-    if (!response.ok || !result.id) throw new Error(`Resend rejected the email: ${result.message ?? response.status}.`);
+    if (!response.ok || !result.id)
+      throw new MailFailure(
+        "The mail provider rejected this request.",
+        response.status >= 400 && response.status < 500 && ![408, 409, 429].includes(response.status),
+        `provider_${response.status}`,
+      );
     return { providerMessageId: result.id };
   }
 }
@@ -106,13 +115,13 @@ export class PostalMimeIncomingProvider implements IncomingMailProvider {
     });
     const from = mailbox(email.from);
     const to = email.to?.map(mailbox).find(Boolean);
-    if (!from?.email || !to?.email) throw new Error("Inbound email must include valid From and To mailboxes.");
+    if (!from?.email) throw new Error("Inbound email must include a valid From mailbox.");
     const text = email.text?.trim() || readableText(email.html ?? "");
     if (!text) throw new Error("Inbound email does not contain a readable message.");
     return {
-      providerMessageId: email.messageId?.slice(0, 998) || `mail_${crypto.randomUUID()}`,
+      providerMessageId: email.messageId?.slice(0, 998) || "",
       from,
-      to: to.email,
+      to: to?.email ?? "",
       subject: (email.subject?.trim() || "Support request").slice(0, 240),
       text: text.slice(0, 100_000),
       inReplyTo: email.inReplyTo?.slice(0, 998),

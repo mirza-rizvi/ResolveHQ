@@ -28,13 +28,32 @@ export async function refreshTicketSearch(
   organizationId: string,
   ticketId: string,
 ): Promise<void> {
-  const row = await database.prepare(searchContentQuery).bind(organizationId, ticketId).first<{ content: string }>();
-  await database.batch([
+  const mapped = await database
+    .prepare(
+      "SELECT r.row_id AS rowId, f.ticket_id AS ticketId, f.organization_id AS organizationId FROM ticket_search_rows r LEFT JOIN ticket_search f ON f.rowid = r.row_id WHERE r.organization_id = ? AND r.ticket_id = ?",
+    )
+    .bind(organizationId, ticketId)
+    .first<{ rowId: number; ticketId: string | null; organizationId: string | null }>();
+  const stable = mapped?.ticketId === ticketId && mapped?.organizationId === organizationId;
+  const statements = stable
+    ? [database.prepare("DELETE FROM ticket_search WHERE rowid = ?").bind(mapped.rowId)]
+    : [
+        // A one-time repair also supports rows refreshed by an older Worker during rollout.
+        database
+          .prepare("DELETE FROM ticket_search WHERE organization_id = ? AND ticket_id = ?")
+          .bind(organizationId, ticketId),
+        database
+          .prepare(
+            "INSERT INTO ticket_search_rows (row_id, organization_id, ticket_id) VALUES (max(coalesce((SELECT max(rowid) FROM ticket_search),0), coalesce((SELECT max(row_id) FROM ticket_search_rows),0)) + 1, ?, ?) ON CONFLICT(organization_id, ticket_id) DO UPDATE SET row_id = excluded.row_id",
+          )
+          .bind(organizationId, ticketId),
+      ];
+  statements.push(
     database
-      .prepare("DELETE FROM ticket_search WHERE organization_id = ? AND ticket_id = ?")
-      .bind(organizationId, ticketId),
-    database
-      .prepare("INSERT INTO ticket_search (organization_id, ticket_id, content) VALUES (?, ?, ?)")
-      .bind(organizationId, ticketId, row?.content ?? ""),
-  ]);
+      .prepare(
+        `INSERT INTO ticket_search (rowid, organization_id, ticket_id, content) SELECT (SELECT row_id FROM ticket_search_rows WHERE organization_id = ? AND ticket_id = ?), ?, ?, content FROM (${searchContentQuery})`,
+      )
+      .bind(organizationId, ticketId, organizationId, ticketId, organizationId, ticketId),
+  );
+  await database.batch(statements);
 }

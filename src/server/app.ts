@@ -1,3 +1,4 @@
+import { mailRecoveryRoutes } from "./mail/recovery";
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import type { HonoEnv } from "./types";
@@ -58,6 +59,7 @@ app.route("/api/search", searchRoutes);
 app.route("/api/attachments", attachmentRoutes);
 app.route("/api/operations", operationRoutes);
 app.route("/api/webhooks", webhookRoutes);
+app.route("/api/mail-recovery", mailRecoveryRoutes);
 
 const v1 = new Hono<HonoEnv>();
 v1.route("/auth", authRoutes);
@@ -70,6 +72,7 @@ v1.route("/search", searchRoutes);
 v1.route("/attachments", attachmentRoutes);
 v1.route("/operations", operationRoutes);
 v1.route("/webhooks", webhookRoutes);
+v1.route("/mail-recovery", mailRecoveryRoutes);
 app.route("/api/v1", v1);
 
 app.notFound((context) => {
@@ -107,7 +110,7 @@ app.onError((error, context) => {
       400,
     );
   }
-  console.error("Unhandled request error", error);
+  console.error({ event: "request_failed", requestId: context.get("requestId") });
   return context.json(
     { error: { code: "internal_error", message: "Something went wrong.", requestId: context.get("requestId") } },
     500,

@@ -224,6 +224,9 @@ export function InboxPage() {
         loading={conversation.isPending}
         error={conversation.error ? errorMessage(conversation.error, "The conversation could not be loaded.") : ""}
         onRetry={() => void conversation.refetch()}
+        hasOlder={conversation.hasOlder}
+        loadingOlder={conversation.loadingOlder}
+        onLoadOlder={conversation.loadOlder}
         members={workspace.members}
         teams={workspace.teams}
         availableTags={workspace.tags}

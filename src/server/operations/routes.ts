@@ -1,14 +1,14 @@
 import { and, desc, eq, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { recordActivity } from "../activity/service";
+import { applyBulkUpdate } from "../tickets/bulk";
 import { requireAuth, requireRole } from "../auth/middleware";
 import { createDb } from "../db";
-import { notifications, savedViews, teamMembers, teams, ticketDrafts, ticketReadStates } from "../db/schema";
+import { notifications, savedViews, ticketDrafts, ticketReadStates } from "../db/schema";
 import { HttpError } from "../http/errors";
 import { validate } from "../http/validate";
 import { newId } from "../lib/id";
-import { applyTicketUpdate, assertActiveMember, assertTeam, type TicketChanges } from "../tickets/service";
+import { assertActiveMember, assertTeam, type TicketChanges } from "../tickets/service";
 import type { HonoEnv } from "../types";
 import { roleRank, ticketPriorities, ticketStatuses } from "../../shared/domain";
 
@@ -218,16 +218,14 @@ operationRoutes.post(
       );
     }
     const id = newId("viw");
-    await createDb(context.env.DB)
-      .insert(savedViews)
-      .values({
-        id,
-        organizationId: tenant.organizationId,
-        ownerUserId: tenant.userId,
-        name: input.name,
-        visibility: input.visibility,
-        filters: input.filters,
-      });
+    await createDb(context.env.DB).insert(savedViews).values({
+      id,
+      organizationId: tenant.organizationId,
+      ownerUserId: tenant.userId,
+      name: input.name,
+      visibility: input.visibility,
+      filters: input.filters,
+    });
     return context.json({ view: { id, ...input } }, 201);
   },
 );
@@ -269,25 +267,25 @@ operationRoutes.post(
     const tenant = context.get("tenant");
     const input = context.req.valid("json");
     const id = newId("tem");
-    const db = createDb(context.env.DB);
-    await db.insert(teams).values({ id, organizationId: tenant.organizationId, name: input.name });
-    for (const userId of input.userIds) {
-      const member = await context.env.DB.prepare(
-        "SELECT 1 FROM organization_memberships WHERE organization_id = ? AND user_id = ? AND disabled_at IS NULL",
-      )
-        .bind(tenant.organizationId, userId)
-        .first();
-      if (!member) throw new HttpError(404, "member_not_found", "A selected team member was not found.");
-      await db
-        .insert(teamMembers)
-        .values({ organizationId: tenant.organizationId, teamId: id, userId })
-        .onConflictDoNothing();
-    }
+    const userIds = [...new Set(input.userIds)];
+    const members = await context.env.DB.prepare(
+      "SELECT user_id FROM organization_memberships WHERE organization_id = ? AND disabled_at IS NULL AND user_id IN (SELECT value FROM json_each(?))",
+    )
+      .bind(tenant.organizationId, JSON.stringify(userIds))
+      .all();
+    if (members.results.length !== userIds.length)
+      throw new HttpError(404, "member_not_found", "A selected team member was not found.");
+    await context.env.DB.batch([
+      context.env.DB.prepare(
+        "INSERT INTO teams (id, organization_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      ).bind(id, tenant.organizationId, input.name, Date.now(), Date.now()),
+      context.env.DB.prepare(
+        "INSERT INTO team_members (organization_id, team_id, user_id, created_at) SELECT ?, ?, value, ? FROM json_each(?)",
+      ).bind(tenant.organizationId, id, Date.now(), JSON.stringify(userIds)),
+    ]);
     return context.json({ team: { id, ...input } }, 201);
   },
 );
-
-const skippableBulkReasons = new Set(["ticket_not_found", "ticket_version_conflict"]);
 
 operationRoutes.post(
   "/tickets/bulk",
@@ -311,7 +309,6 @@ operationRoutes.post(
       input.assignedTeamId === undefined
     )
       throw new HttpError(400, "empty_bulk_action", "Choose at least one change.");
-    const db = createDb(context.env.DB);
     const changes: TicketChanges = {
       status: input.status,
       priority: input.priority,
@@ -322,36 +319,7 @@ operationRoutes.post(
     // assignee cannot leave the first few tickets mutated behind a failed request.
     if (changes.assignedUserId) await assertActiveMember(context.env.DB, tenant.organizationId, changes.assignedUserId);
     if (changes.assignedTeamId) await assertTeam(context.env.DB, tenant.organizationId, changes.assignedTeamId);
-    const skipped: Array<{ ticketId: string; reason: string }> = [];
-    let updated = 0;
-    for (const ticketId of input.ticketIds) {
-      try {
-        await applyTicketUpdate(context.env, tenant, ticketId, changes);
-      } catch (error) {
-        // A ticket that is gone, or that someone else changed underneath us, is
-        // reported and skipped so the rest of the selection still goes through.
-        // Anything else fails the request rather than leaving a partial write.
-        if (error instanceof HttpError && skippableBulkReasons.has(error.code)) {
-          skipped.push({ ticketId, reason: error.code });
-          continue;
-        }
-        throw error;
-      }
-      await recordActivity(db, tenant, {
-        ticketId,
-        eventType: "ticket.bulk_updated",
-        entityType: "ticket",
-        entityId: ticketId,
-        metadata: {
-          status: input.status,
-          priority: input.priority,
-          assignedUserId: input.assignedUserId,
-          assignedTeamId: input.assignedTeamId,
-        },
-      });
-      updated += 1;
-    }
-    return context.json({ updated, skipped });
+    return context.json(await applyBulkUpdate(context.env, tenant, input.ticketIds, changes));
   },
 );
 

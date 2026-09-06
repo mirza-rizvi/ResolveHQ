@@ -1,4 +1,5 @@
-import { and, eq } from "drizzle-orm";
+import { storeValidatedUpload } from "./stream";
+import { and, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
@@ -88,37 +89,60 @@ attachmentRoutes.put("/intents/:token", async (context) => {
   if (context.req.header("content-type") !== intent.contentType || !context.req.raw.body)
     throw new HttpError(415, "mime_mismatch", "The uploaded content type does not match the upload intent.");
   await assertTicket(context.env.DB, tenant.organizationId, intent.ticketId);
-  const objectKey = `${tenant.organizationId}/${intent.attachmentId}/${crypto.randomUUID()}`;
-  await context.env.ATTACHMENTS.put(objectKey, context.req.raw.body, {
-    httpMetadata: { contentType: intent.contentType },
-    customMetadata: { attachmentId: intent.attachmentId },
-  });
-  const object = await context.env.ATTACHMENTS.get(objectKey);
-  if (!object) throw new HttpError(500, "upload_failed", "The uploaded object could not be verified.");
-  const body = await object.arrayBuffer();
-  if (body.byteLength !== intent.size || !matchesSignature(new Uint8Array(body), intent.contentType)) {
-    await context.env.ATTACHMENTS.delete(objectKey);
-    throw new HttpError(415, "mime_mismatch", "The file contents do not match its declared type.");
+  const existing = await context.env.DB.prepare(
+    "SELECT id, ticket_id AS ticketId, message_id AS messageId, filename, content_type AS contentType, size FROM attachments WHERE id = ? AND organization_id = ? AND uploaded_by_user_id = ? AND ticket_id = ? AND cleanup_claimed_at IS NULL",
+  )
+    .bind(intent.attachmentId, tenant.organizationId, tenant.userId, intent.ticketId)
+    .first();
+  if (existing) {
+    await context.req.raw.body.cancel();
+    return context.json({ attachment: existing }, 200);
   }
-  const checksum = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", body)));
+  const objectKey = `${tenant.organizationId}/${intent.attachmentId}/${crypto.randomUUID()}`;
+  const reserved = await context.env.DB.prepare(
+    "INSERT OR IGNORE INTO attachment_uploads (id, object_key, organization_id, user_id, ticket_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  )
+    .bind(intent.attachmentId, objectKey, tenant.organizationId, tenant.userId, intent.ticketId, Date.now())
+    .run();
+  if (!reserved.meta.changes) throw new HttpError(409, "upload_in_progress", "This upload is already in progress.");
   try {
-    await createDb(context.env.DB)
-      .insert(attachments)
-      .values({
-        id: intent.attachmentId,
-        organizationId: tenant.organizationId,
-        ticketId: intent.ticketId,
-        messageId: null,
-        objectKey,
-        filename: intent.filename,
-        contentType: intent.contentType,
-        size: intent.size,
+    const checksum = await storeValidatedUpload(
+      context.env.ATTACHMENTS,
+      objectKey,
+      context.req.raw.body,
+      intent.size,
+      intent.contentType,
+      intent.attachmentId,
+      matchesSignature,
+    );
+    const results = await context.env.DB.batch([
+      context.env.DB.prepare(
+        "INSERT INTO attachments (id, organization_id, ticket_id, object_key, filename, content_type, size, checksum, uploaded_by_user_id, created_at) SELECT id, organization_id, ticket_id, object_key, ?, ?, ?, ?, user_id, ? FROM attachment_uploads WHERE id = ? AND created_at >= ?",
+      ).bind(
+        intent.filename,
+        intent.contentType,
+        intent.size,
         checksum,
-        uploadedByUserId: tenant.userId,
-      });
+        Date.now(),
+        intent.attachmentId,
+        Date.now() - 24 * 60 * 60 * 1000,
+      ),
+      context.env.DB.prepare("DELETE FROM attachment_uploads WHERE id = ?").bind(intent.attachmentId),
+    ]);
+    if (!results[0].meta.changes)
+      throw new HttpError(404, "upload_expired", "This upload expired. Start a new upload.");
   } catch (error) {
-    await context.env.ATTACHMENTS.delete(objectKey);
-    throw error;
+    // A lost D1 response can follow a committed insert. Never delete a committed object's bytes.
+    const committed = await context.env.DB.prepare(
+      "SELECT id FROM attachments WHERE id = ? AND object_key = ? AND organization_id = ?",
+    )
+      .bind(intent.attachmentId, objectKey, tenant.organizationId)
+      .first();
+    if (!committed) {
+      await context.env.ATTACHMENTS.delete(objectKey);
+      await context.env.DB.prepare("DELETE FROM attachment_uploads WHERE id = ?").bind(intent.attachmentId).run();
+      throw error;
+    }
   }
   return context.json(
     {
@@ -140,7 +164,13 @@ attachmentRoutes.get("/:id", async (context) => {
   const [attachment] = await createDb(context.env.DB)
     .select()
     .from(attachments)
-    .where(and(eq(attachments.id, context.req.param("id")), eq(attachments.organizationId, tenant.organizationId)))
+    .where(
+      and(
+        eq(attachments.id, context.req.param("id")),
+        eq(attachments.organizationId, tenant.organizationId),
+        isNull(attachments.cleanupClaimedAt),
+      ),
+    )
     .limit(1);
   if (!attachment) throw new HttpError(404, "attachment_not_found", "Attachment not found.");
   const object = await new R2StorageProvider(context.env.ATTACHMENTS).get(attachment.objectKey);

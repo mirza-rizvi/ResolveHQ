@@ -1,0 +1,2 @@
+CREATE INDEX `messages_thread_cursor_idx` ON `messages` (`organization_id`,`ticket_id`,`created_at`,`id`);--> statement-breakpoint
+CREATE INDEX `tickets_customer_cursor_idx` ON `tickets` (`organization_id`,`customer_id`,`id`);

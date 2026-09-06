@@ -198,8 +198,8 @@ organizationRoutes.post("/invitations", requireRole("admin"), validate("json", i
       },
       appUrl,
     );
-  } catch (error) {
-    console.error("Invitation mail failed", error);
+  } catch {
+    console.error({ event: "invitation_mail_failed" });
   }
   return context.json({ invitation: { id: invitationId, email: input.email, role: input.role, inviteUrl } }, 201);
 });

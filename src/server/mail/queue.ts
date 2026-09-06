@@ -1,4 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { MailFailure, leaseMs, maxAttempts, retryDelay, retryWindowMs } from "./reliability";
+import type { OutgoingMail } from "../providers/mail";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { createDb } from "../db";
 import {
   activityLogs,
@@ -39,19 +41,21 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
   const staged = "stagingObjectKey" in payload;
   const eventId = staged ? payload.eventId : newId("ime");
   const db = createDb(env.DB);
-  // Spend the retry budget before anything can fail. A staged payload whose
-  // object has gone missing, or whose recipient no longer maps to an inbox,
-  // never reaches the parser, so counting the attempt further down would leave
-  // the cron re-queueing that same row on every tick forever.
-  const attempts = staged
-    ? ((
-        await env.DB.prepare(
-          "UPDATE inbound_mail_events SET attempts = attempts + 1, updated_at = ? WHERE id = ? RETURNING attempts",
-        )
-          .bind(Date.now(), eventId)
-          .first<{ attempts: number }>()
-      )?.attempts ?? 1)
-    : 1;
+  const claimTime = Date.now();
+  if (!staged)
+    await env.DB.prepare(
+      "INSERT INTO inbound_mail_events (id, staging_object_key, created_at, updated_at) VALUES (?, ?, ?, ?)",
+    )
+      .bind(eventId, `test://${eventId}`, claimTime, claimTime)
+      .run();
+  const claim = await env.DB.prepare(
+    "UPDATE inbound_mail_events SET attempts = attempts + 1, status = 'processing', lease_until = ?, updated_at = ? WHERE id = ? AND status <> 'completed' AND terminal_reason IS NULL AND attempts < 6 AND lease_until <= ? AND next_attempt_at <= ? RETURNING attempts, envelope_to AS envelopeTo, envelope_from AS envelopeFrom",
+  )
+    .bind(claimTime + leaseMs, claimTime, eventId, claimTime, claimTime)
+    .first<{ attempts: number; envelopeTo: string | null; envelopeFrom: string | null }>();
+  if (!claim) return;
+  const attempts = claim.attempts;
+  let envelopeTo = claim.envelopeTo || payload.to;
   try {
     // Reading the staged object sits inside the try so a missing or oversized
     // payload lands in the catch and marks the event failed with the reason.
@@ -66,6 +70,7 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
         throw new Error("The staged inbound email is missing.");
       }
       if (object.size > maximumRawMailSize) throw new Error("Inbound email exceeds the 25 MB processing limit.");
+      envelopeTo ||= object.customMetadata?.to;
       raw = await object.arrayBuffer();
     } else {
       if (payload.raw.byteLength > maximumRawMailSize)
@@ -74,49 +79,56 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
     }
 
     const mail = await new PostalMimeIncomingProvider().parse(raw);
-    const recipient = (mail.to || payload.to || "").toLowerCase();
+    mail.providerMessageId ||= `<${eventId}@resolvehq.invalid>`;
+    const recipient = (envelopeTo || mail.to || "").toLowerCase();
     const inbox = await resolveInbox(env.DB, recipient);
-    if (!inbox) throw new Error(`No ResolveHQ inbox is configured for ${recipient}.`);
+    if (!inbox) throw new MailFailure("No ResolveHQ inbox is configured for this delivery.", true, "inbox_missing");
     const organizationId = inbox.organizationId;
     const now = new Date();
     const duplicateEvent = await env.DB.prepare(
-      "SELECT status FROM inbound_mail_events WHERE inbox_id = ? AND provider_message_id = ? LIMIT 1",
+      "SELECT id, status, message_id AS messageId FROM inbound_mail_events WHERE inbox_id = ? AND provider_message_id = ? LIMIT 1",
     )
       .bind(inbox.id, mail.providerMessageId)
-      .first<{ status: string }>();
+      .first<{ id: string; status: string; messageId: string }>();
     if (duplicateEvent?.status === "completed") {
+      await env.DB.prepare(
+        "UPDATE inbound_mail_events SET status = 'completed', message_id = ?, lease_until = 0, updated_at = ? WHERE id = ?",
+      )
+        .bind(duplicateEvent.messageId, Date.now(), eventId)
+        .run();
       if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
       return;
     }
 
-    await db
-      .insert(inboundMailEvents)
-      .values({
-        id: eventId,
-        inboxId: inbox.id,
-        organizationId,
-        stagingObjectKey: staged ? payload.stagingObjectKey : `test://${eventId}`,
-        providerMessageId: mail.providerMessageId,
-        status: "processing",
-        attempts,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: staged ? inboundMailEvents.stagingObjectKey : inboundMailEvents.id,
-        set: {
-          inboxId: inbox.id,
-          organizationId,
-          providerMessageId: mail.providerMessageId,
-          status: "processing",
-          attempts,
-          lastError: null,
-          updatedAt: now,
-        },
-      });
+    if (duplicateEvent && duplicateEvent.id !== eventId) {
+      await env.DB.prepare(
+        "UPDATE inbound_mail_events SET status = 'completed', terminal_reason = 'duplicate_event', lease_until = 0, updated_at = ? WHERE id = ?",
+      )
+        .bind(Date.now(), eventId)
+        .run();
+      if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
+      return;
+    }
+    // The unique inbox/provider index arbitrates concurrent canonical deliveries.
+    try {
+      await env.DB.prepare(
+        "UPDATE inbound_mail_events SET inbox_id = ?, organization_id = ?, provider_message_id = ?, envelope_to = ?, last_error = NULL WHERE id = ?",
+      )
+        .bind(inbox.id, organizationId, mail.providerMessageId, recipient, eventId)
+        .run();
+    } catch (error) {
+      if (!String(error).includes("UNIQUE")) throw error;
+      await env.DB.prepare(
+        "UPDATE inbound_mail_events SET status = 'completed', terminal_reason = 'duplicate_event', lease_until = 0 WHERE id = ?",
+      )
+        .bind(eventId)
+        .run();
+      if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
+      return;
+    }
 
     const existing = await env.DB.prepare(
-      "SELECT m.id AS messageId, m.ticket_id AS ticketId, t.number, t.subject, t.customer_id AS customerId FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id WHERE m.organization_id = ? AND m.provider_message_id = ? LIMIT 1",
+      "SELECT m.id AS messageId, m.created_at AS createdAt, m.ticket_id AS ticketId, t.number, t.subject, t.customer_id AS customerId FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id WHERE m.organization_id = ? AND m.provider_message_id = ? LIMIT 1",
     )
       .bind(organizationId, mail.providerMessageId)
       .first<ExistingMessage>();
@@ -187,6 +199,8 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       }
     }
 
+    const newMessageId = existing?.messageId ?? newId("msg");
+    const ticketWrites: Parameters<typeof db.batch>[0][number][] = [];
     if (!ticket) {
       const numberRow = await env.DB.prepare(
         "UPDATE organizations SET next_ticket_number = next_ticket_number + 1, updated_at = ? WHERE id = ? RETURNING next_ticket_number - 1 AS number",
@@ -195,66 +209,106 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
         .first<{ number: number }>();
       if (!numberRow) throw new Error("Inbound workspace no longer exists.");
       ticket = { id: newId("tkt"), number: numberRow.number, subject: mail.subject, customerId: customer.id };
-      await db.insert(tickets).values({
-        id: ticket.id,
-        organizationId,
-        inboxId: inbox.id,
-        number: ticket.number,
-        customerId: customer.id,
-        subject: ticket.subject,
-        status: "open",
-        priority: "normal",
-        normalizedSearch: normalizeSearch(String(ticket.number), ticket.subject, customer.name, customer.email),
-        lastReplyAt: now,
-        lastCustomerReplyAt: now,
-        lastMessagePreview: preview(mail.text),
-      });
-      await logMailActivity(db, organizationId, ticket.id, "ticket.created_from_email", "ticket", ticket.id, {
-        inboxId: inbox.id,
-      });
+      ticketWrites.push(
+        db.insert(tickets).values({
+          id: ticket.id,
+          organizationId,
+          inboxId: inbox.id,
+          number: ticket.number,
+          customerId: customer.id,
+          subject: ticket.subject,
+          status: "open",
+          priority: "normal",
+          normalizedSearch: normalizeSearch(String(ticket.number), ticket.subject, customer.name, customer.email),
+          lastReplyAt: now,
+          lastCustomerReplyAt: now,
+          lastMessagePreview: preview(mail.text),
+        }),
+      );
     }
 
-    const messageId = existing?.messageId ?? newId("msg");
+    if (ticketWrites.length)
+      ticketWrites.push(
+        db.insert(activityLogs).values({
+          id: newId("act"),
+          organizationId,
+          ticketId: ticket.id,
+          eventType: "ticket.created_from_email",
+          entityType: "ticket",
+          entityId: ticket.id,
+          metadata: {},
+        }),
+      );
+
+    const messageId = newMessageId;
     if (!existing) {
-      await db.insert(messages).values({
-        id: messageId,
-        organizationId,
-        ticketId: ticket.id,
-        authorType: "customer",
-        authorCustomerId: customer.id,
-        kind: "message",
-        bodyText: mail.text,
-        normalizedSearch: normalizeSearch(mail.text),
-        providerMessageId: mail.providerMessageId,
-        rfcMessageId: mail.providerMessageId,
-        deliveryStatus: "received",
-        createdAt: now,
-      });
-      await env.DB.prepare(
-        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, waiting_since = NULL, updated_at = ?, last_reply_at = ?, last_customer_reply_at = ?, last_message_preview = ?, message_count = message_count + 1, version = version + 1 WHERE organization_id = ? AND id = ?",
-      )
-        .bind(now.getTime(), now.getTime(), now.getTime(), preview(mail.text), organizationId, ticket.id)
-        .run();
+      await db.batch([
+        ...ticketWrites,
+        db.insert(messages).values({
+          id: messageId,
+          organizationId,
+          ticketId: ticket.id,
+          authorType: "customer",
+          authorCustomerId: customer.id,
+          kind: "message",
+          bodyText: mail.text,
+          normalizedSearch: normalizeSearch(mail.text),
+          providerMessageId: mail.providerMessageId,
+          rfcMessageId: mail.providerMessageId,
+          deliveryStatus: "received",
+          createdAt: now,
+        }),
+        db
+          .update(tickets)
+          .set({
+            status: "open",
+            resolvedAt: null,
+            closedAt: null,
+            waitingSince: null,
+            updatedAt: now,
+            lastReplyAt: now,
+            lastCustomerReplyAt: now,
+            lastMessagePreview: preview(mail.text),
+            messageCount: sql`${tickets.messageCount} + 1`,
+            version: sql`${tickets.version} + 1`,
+          })
+          .where(and(eq(tickets.organizationId, organizationId), eq(tickets.id, ticket.id))),
+        db.update(inboundMailEvents).set({ messageId }).where(eq(inboundMailEvents.id, eventId)),
+      ] as unknown as Parameters<typeof db.batch>[0]);
       await refreshTicketSearch(env.DB, organizationId, ticket.id);
     } else {
       // Reconcile the denormalized ticket state in case a previous delivery
       // stopped after the unique message insert but before the ticket update.
       await env.DB.prepare(
-        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, waiting_since = NULL, last_reply_at = max(coalesce(last_reply_at, 0), ?), last_customer_reply_at = max(coalesce(last_customer_reply_at, 0), ?), last_message_preview = ?, message_count = (SELECT count(*) FROM messages WHERE organization_id = ? AND ticket_id = ?) WHERE organization_id = ? AND id = ?",
+        "UPDATE tickets SET status = 'open', resolved_at = NULL, closed_at = NULL, waiting_since = NULL, last_reply_at = max(coalesce(last_reply_at, 0), ?), last_customer_reply_at = max(coalesce(last_customer_reply_at, 0), ?), last_message_preview = ?, message_count = (SELECT count(*) FROM messages WHERE organization_id = ? AND ticket_id = ?) WHERE organization_id = ? AND id = ? AND coalesce(last_customer_reply_at, 0) < ?",
       )
-        .bind(now.getTime(), now.getTime(), preview(mail.text), organizationId, ticket.id, organizationId, ticket.id)
+        .bind(
+          existing.createdAt,
+          existing.createdAt,
+          preview(mail.text),
+          organizationId,
+          ticket.id,
+          organizationId,
+          ticket.id,
+          existing.createdAt,
+        )
         .run();
       await refreshTicketSearch(env.DB, organizationId, ticket.id);
     }
     await db
       .update(customers)
-      .set({ lastContactedAt: now, updatedAt: now })
+      .set({
+        lastContactedAt: sql`max(coalesce(${customers.lastContactedAt}, 0), ${existing?.createdAt ?? now.getTime()})`,
+        updatedAt: now,
+      })
       .where(and(eq(customers.organizationId, organizationId), eq(customers.id, customer.id)));
 
     const cursor = await env.DB.prepare("SELECT attachment_cursor AS cursor FROM inbound_mail_events WHERE id = ?")
       .bind(eventId)
       .first<{ cursor: number }>();
-    for (let index = cursor?.cursor ?? 0; index < mail.attachments.length; index += 1) {
+    const startCursor = cursor?.cursor ?? 0;
+    const endCursor = Math.min(mail.attachments.length, startCursor + 5);
+    for (let index = startCursor; index < endCursor; index += 1) {
       const file = mail.attachments[index];
       if (
         file.body.byteLength > 0 &&
@@ -290,9 +344,24 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
         .where(eq(inboundMailEvents.id, eventId));
     }
 
+    if (endCursor < mail.attachments.length) {
+      await env.DB.prepare(
+        "UPDATE inbound_mail_events SET status = 'staged', attempts = attempts - 1, lease_until = 0, dispatch_until = 0, next_attempt_at = 0, updated_at = ? WHERE id = ?",
+      )
+        .bind(Date.now(), eventId)
+        .run();
+      return;
+    }
     await db
       .update(inboundMailEvents)
-      .set({ status: "completed", messageId, completedAt: new Date(), updatedAt: new Date(), lastError: null })
+      .set({
+        leaseUntil: 0,
+        status: "completed",
+        messageId,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+        lastError: null,
+      })
       .where(eq(inboundMailEvents.id, eventId));
     if (!existing)
       await logMailActivity(db, organizationId, ticket.id, "ticket.customer_replied", "message", messageId, {
@@ -300,14 +369,26 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       });
     if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
   } catch (error) {
-    const message = error instanceof Error ? error.message.slice(0, 1000) : "Unknown inbound mail error";
+    const terminal = (error instanceof MailFailure && error.terminal) || attempts >= maxAttempts;
+    const code = error instanceof MailFailure ? error.code : "inbound_processing_failed";
     await env.DB.prepare(
-      "UPDATE inbound_mail_events SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?",
+      "UPDATE inbound_mail_events SET status = 'failed', last_error = ?, terminal_reason = ?, lease_until = 0, dispatch_until = ?, next_attempt_at = ?, updated_at = ? WHERE id = ? AND status <> 'completed'",
     )
-      .bind(message, Date.now(), eventId)
-      .run()
-      .catch(() => undefined);
-    throw error;
+      .bind(
+        code,
+        terminal ? code : null,
+        Date.now() + leaseMs,
+        Date.now() + retryDelay(attempts) * 1000,
+        Date.now(),
+        eventId,
+      )
+      .run();
+    throw new MailFailure(
+      error instanceof MailFailure ? error.message : "Inbound mail processing failed.",
+      terminal,
+      code,
+      retryDelay(attempts),
+    );
   }
 }
 
@@ -318,7 +399,7 @@ export async function processOutboundMail(
   const now = new Date();
   let job = payload.jobId
     ? await env.DB.prepare(
-        "SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts FROM outbound_mail_jobs WHERE id = ?",
+        "SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts, lease_until AS leaseUntil, first_attempt_at AS firstAttemptAt, envelope, generation FROM outbound_mail_jobs WHERE id = ?",
       )
         .bind(payload.jobId)
         .first<JobRow>()
@@ -339,17 +420,19 @@ export async function processOutboundMail(
       )
       .run();
     job = await env.DB.prepare(
-      "SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts FROM outbound_mail_jobs WHERE message_id = ?",
+      "SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts, lease_until AS leaseUntil, first_attempt_at AS firstAttemptAt, envelope, generation FROM outbound_mail_jobs WHERE message_id = ?",
     )
       .bind(payload.messageId)
       .first<JobRow>();
   }
   if (!job || job.status === "sent") return;
-  await env.DB.prepare(
-    "UPDATE outbound_mail_jobs SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE id = ? AND status <> 'sent'",
+  const claimed = await env.DB.prepare(
+    "UPDATE outbound_mail_jobs SET status = 'processing', attempts = attempts + 1, lease_until = ?, updated_at = ? WHERE id = ? AND status <> 'sent' AND terminal_reason IS NULL AND attempts < 6 AND lease_until <= ? AND next_attempt_at <= ? AND generation = ? RETURNING attempts",
   )
-    .bind(now.getTime(), job.id)
-    .run();
+    .bind(now.getTime() + leaseMs, now.getTime(), job.id, now.getTime(), now.getTime(), job.generation)
+    .first<{ attempts: number }>();
+  if (!claimed) return;
+  job.attempts = claimed.attempts;
   const db = createDb(env.DB);
   const row = await env.DB.prepare(
     "SELECT m.body_text AS body, m.body_html AS html, m.delivery_status AS status, m.rfc_message_id AS rfcMessageId, c.email AS customerEmail, t.id AS ticketId, t.subject, t.number, o.slug AS organizationSlug, i.email_address AS inboxAddress, coalesce(i.email_address, o.support_email) AS supportEmail FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = m.organization_id JOIN organizations o ON o.id = m.organization_id LEFT JOIN inboxes i ON i.id = t.inbox_id AND i.organization_id = t.organization_id AND i.disabled_at IS NULL WHERE m.organization_id = ? AND m.id = ? LIMIT 1",
@@ -365,9 +448,13 @@ export async function processOutboundMail(
   }
   try {
     const provider = selectOutgoingProvider(env, job.organizationId);
-    if (!provider) throw new Error("No outgoing mail provider is configured.");
+    if (!provider) throw new MailFailure("No outgoing mail provider is configured.", true, "provider_missing");
     if (!row.supportEmail)
-      throw new Error("No support inbox is configured. Add one in Settings \u2192 Support inboxes.");
+      throw new MailFailure(
+        "No support inbox is configured. Add one in Settings → Support inboxes.",
+        true,
+        "inbox_missing",
+      );
     const domain = row.supportEmail.split("@")[1] ?? "resolvehq.local";
     const rfcMessageId = row.rfcMessageId ?? `<${job.messageId}@${domain}>`;
     if (!row.rfcMessageId)
@@ -379,55 +466,76 @@ export async function processOutboundMail(
     )
       .bind(job.organizationId, row.ticketId)
       .first<{ ref: string }>();
-    const result = await provider.send(
-      {
-        from: row.supportEmail,
-        to: row.customerEmail,
-        subject: `[#${row.number}] ${row.subject}`,
-        text: row.body,
-        html: row.html,
-        messageId: rfcMessageId,
-        references: lastCustomer?.ref ? [lastCustomer.ref] : undefined,
-      },
-      { idempotencyKey: job.idempotencyKey },
-    );
+    const envelope: OutgoingMail = job.envelope
+      ? JSON.parse(job.envelope)
+      : {
+          from: row.supportEmail,
+          to: row.customerEmail,
+          subject: `[#${row.number}] ${row.subject}`,
+          text: row.body,
+          html: row.html,
+          messageId: rfcMessageId,
+          references: lastCustomer?.ref ? [lastCustomer.ref] : undefined,
+        };
+    if (job.firstAttemptAt && Date.now() - job.firstAttemptAt >= retryWindowMs)
+      throw new MailFailure("Delivery needs review before retrying.", true, "delivery_uncertain");
+    if (!job.envelope)
+      await env.DB.prepare("UPDATE outbound_mail_jobs SET envelope = ?, first_attempt_at = ? WHERE id = ?")
+        .bind(JSON.stringify(envelope), Date.now(), job.id)
+        .run();
+    const result = await provider.send(envelope, { idempotencyKey: job.idempotencyKey });
     await db.batch([
       db
         .update(messages)
-        .set({ deliveryStatus: "sent", providerMessageId: result.providerMessageId })
+        .set({
+          deliveryStatus: sql`CASE WHEN EXISTS (SELECT 1 FROM outbound_mail_jobs WHERE id = ${job.id} AND terminal_reason IS NOT NULL) THEN 'failed' ELSE 'sent' END`,
+          providerMessageId: result.providerMessageId,
+        })
         .where(and(eq(messages.organizationId, job.organizationId), eq(messages.id, job.messageId))),
       db
         .update(outboundMailJobs)
         .set({
-          status: "sent",
+          status: sql`CASE WHEN ${outboundMailJobs.terminalReason} IS NULL THEN 'sent' ELSE 'failed' END`,
+          leaseUntil: 0,
           providerMessageId: result.providerMessageId,
           sentAt: now,
-          lastError: null,
+          lastError: sql`CASE WHEN ${outboundMailJobs.terminalReason} IS NULL THEN NULL ELSE ${outboundMailJobs.lastError} END`,
           updatedAt: now,
         })
         .where(eq(outboundMailJobs.id, job.id)),
     ]);
   } catch (error) {
-    const attempts = job.attempts + 1;
-    const delay = Math.min(3600, 15 * 2 ** Math.min(attempts, 8));
+    const attempts = job.attempts;
+    const delay = retryDelay(attempts);
+    const terminal = (error instanceof MailFailure && error.terminal) || attempts >= maxAttempts;
+    const code = error instanceof MailFailure ? error.code : "delivery_uncertain";
     await db
       .update(outboundMailJobs)
       .set({
         status: "failed",
-        lastError: error instanceof Error ? error.message.slice(0, 1000) : "Unknown mail error",
+        lastError: code,
+        terminalReason: terminal ? code : null,
+        leaseUntil: 0,
+        dispatchUntil: Date.now() + leaseMs,
         nextAttemptAt: new Date(Date.now() + delay * 1000),
         updatedAt: new Date(),
       })
-      .where(eq(outboundMailJobs.id, job.id));
+      .where(and(eq(outboundMailJobs.id, job.id), isNull(outboundMailJobs.terminalReason)));
     await db
       .update(messages)
       .set({ deliveryStatus: "failed" })
       .where(and(eq(messages.organizationId, job.organizationId), eq(messages.id, job.messageId)));
-    throw error;
+    throw new MailFailure(
+      error instanceof MailFailure ? error.message : "Outbound delivery failed.",
+      terminal,
+      code,
+      delay,
+    );
   }
 }
 
 interface ExistingMessage {
+  createdAt: number;
   messageId: string;
   ticketId: string;
   number: number;
@@ -441,6 +549,10 @@ interface TicketReference {
   customerId: string;
 }
 interface JobRow {
+  leaseUntil: number;
+  firstAttemptAt: number | null;
+  envelope: string | null;
+  generation: number;
   id: string;
   organizationId: string;
   messageId: string;
@@ -462,7 +574,7 @@ interface OutboundRow {
   supportEmail?: string;
 }
 
-async function resolveInbox(database: D1Database, recipient: string) {
+export async function resolveInbox(database: D1Database, recipient: string) {
   const existing = await database
     .prepare(
       "SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? AND disabled_at IS NULL LIMIT 1",
@@ -498,18 +610,16 @@ async function logMailActivity(
   entityId: string,
   metadata: Record<string, unknown>,
 ) {
-  await db
-    .insert(activityLogs)
-    .values({
-      id: newId("act"),
-      organizationId,
-      ticketId,
-      eventType,
-      entityType,
-      entityId,
-      metadata,
-      requestId: "mail-queue",
-    });
+  await db.insert(activityLogs).values({
+    id: newId("act"),
+    organizationId,
+    ticketId,
+    eventType,
+    entityType,
+    entityId,
+    metadata,
+    requestId: "mail-queue",
+  });
 }
 
 function preview(value: string) {

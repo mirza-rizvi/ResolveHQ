@@ -1,3 +1,4 @@
+import { processMaintenance } from "../src/server/maintenance/service";
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { AppBindings } from "resolve-server/types";
@@ -324,6 +325,7 @@ describe("attachment authorization", () => {
       context,
     );
     await waitOnExecutionContext(context);
+    await processMaintenance(env as AppBindings, "cleanup/attachments");
 
     expect(
       await env.DB.prepare("SELECT id FROM attachments WHERE id = ?").bind("att_orphan_fixture").first(),

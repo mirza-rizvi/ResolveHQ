@@ -1,6 +1,7 @@
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+!.dev.vars.local.example
 .env
 .env.*
 !.env.example
