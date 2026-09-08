@@ -26,8 +26,7 @@
     "auth:benchmark": "node scripts/auth-benchmark.mjs"
   },
   "dependencies": {
-    "@fontsource-variable/manrope": "^5.3.0",
-    "@fontsource-variable/newsreader": "^5.3.0",
+    "@fontsource/lato": "^5.3.0",
     "@hono/zod-validator": "^0.7.2",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-dialog": "^1.1.14",

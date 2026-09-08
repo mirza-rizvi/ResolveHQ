@@ -127,7 +127,7 @@ export function CustomersPage() {
           {error && <p className="form-error">{error}</p>}
         </form>
       )}
-      <label className="customer-search">
+      <label className="page-search">
         <Search size={16} />
         <Input
           ref={searchRef}

@@ -200,7 +200,7 @@ export function KnowledgeBasePage() {
           </div>
         </form>
       )}
-      <label className="customer-search">
+      <label className="page-search">
         <Search size={16} />
         <Input
           value={query}

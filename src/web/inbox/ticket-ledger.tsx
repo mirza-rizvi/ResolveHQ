@@ -159,7 +159,10 @@ export function TicketLedger({
             </thead>
             <tbody>
               {tickets.map((ticket) => (
-                <tr key={ticket.id} className={ticket.id === ticketId ? "selected" : ""}>
+                <tr
+                  key={ticket.id}
+                  className={`${ticket.id === ticketId ? "selected" : ""} ${ticket.unread ? "row-unread" : ""}`.trim()}
+                >
                   <td>
                     <input
                       type="checkbox"
@@ -169,8 +172,11 @@ export function TicketLedger({
                     />
                   </td>
                   <td>
-                    <span className="ticket-id">#{ticket.number}</span>
-                    {ticket.unread && <i className="unread-dot" aria-label="Unread" />}
+                    <span className="ticket-line">
+                      <i className={`line-light status-${ticket.status}`} title={ticket.status} />
+                      <span className="ticket-id">#{ticket.number}</span>
+                      {ticket.unread && <i className="unread-dot" aria-label="Unread" />}
+                    </span>
                   </td>
                   <td>
                     <Priority value={ticket.priority} />
