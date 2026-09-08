@@ -21,6 +21,8 @@ CLAUDE.md
 PRODUCT.md
 DESIGN.md
 *.tsbuildinfo
+.eslintcache
+.prettiercache
 AGENTS.md
 
 # Agent workflow artifacts
