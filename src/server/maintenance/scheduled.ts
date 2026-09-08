@@ -1,6 +1,7 @@
 import type { AppBindings } from "../types";
 import { dispatchMail, leaseMs, retryWindowMs } from "../mail/reliability";
 import { discoverCleanup, dispatchMaintenance } from "./service";
+import { enforceTicketRetention } from "./retention";
 
 export async function runScheduled(env: AppBindings) {
   const now = Date.now();
@@ -34,6 +35,7 @@ export async function runScheduled(env: AppBindings) {
   await dispatchMail(env, "inbound-mail");
   await dispatchMail(env, "outbound-mail");
   await discoverCleanup(env);
+  await enforceTicketRetention(env);
   await dispatchMaintenance(env);
 }
 

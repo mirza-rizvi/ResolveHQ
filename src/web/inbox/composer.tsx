@@ -173,13 +173,23 @@ export function Composer({
         </select>
         <span className="composer-ai">
           {aiEnabled && kind === "message" && (
-            <button type="button" disabled={aiBusy !== null} onClick={() => void requestAssistant("draft")}>
+            <button
+              type="button"
+              disabled={aiBusy !== null}
+              onClick={() => void requestAssistant("draft")}
+              title="Sends this conversation to OpenAI to draft a reply"
+            >
               <Sparkles size={13} />
               {aiBusy === "draft" ? "Drafting…" : "AI draft"}
             </button>
           )}
           {aiEnabled && (
-            <button type="button" disabled={aiBusy !== null} onClick={() => void requestAssistant("summarize")}>
+            <button
+              type="button"
+              disabled={aiBusy !== null}
+              onClick={() => void requestAssistant("summarize")}
+              title="Sends this conversation to OpenAI to summarize it"
+            >
               {aiBusy === "summarize" ? "Summarizing…" : "Summarize"}
             </button>
           )}

@@ -7,23 +7,13 @@ import { messages, tickets } from "../db/schema";
 import { HttpError } from "../http/errors";
 import { validate } from "../http/validate";
 import { OpenAIProvider, type AIProvider } from "../providers/ai";
+import { readAiEnabled } from "../organizations/settings";
 import type { AppBindings, HonoEnv, TenantContext } from "../types";
 
 /** AI is strictly opt-in: it activates only when an API key is configured. */
 export function resolveAIProvider(env: AppBindings): AIProvider | null {
   if (!env.OPENAI_API_KEY) return null;
   return new OpenAIProvider(env.OPENAI_API_KEY, env.OPENAI_MODEL || "gpt-4o-mini");
-}
-
-function requireProvider(env: AppBindings): AIProvider {
-  const provider = resolveAIProvider(env);
-  if (!provider)
-    throw new HttpError(
-      503,
-      "ai_unavailable",
-      "AI assistance is not configured. Set OPENAI_API_KEY on the Worker to enable it.",
-    );
-  return provider;
 }
 
 const ticketThreadInput = z.object({
@@ -41,6 +31,29 @@ async function authorizeAssistantRequest(context: AssistantRequestContext) {
   if (!(await context.env.WRITE_RATE_LIMIT.limit({ key: `assistant:${tenant.userId}` })).success)
     throw new HttpError(429, "rate_limited", "AI requests are rate limited. Try again in a moment.");
   return tenant;
+}
+
+/**
+ * The Worker key only makes AI available; each workspace opts in through
+ * Settings. The workspace check runs first so a disabled workspace can never
+ * reach the provider, and the missing-key check keeps unconfigured Workers
+ * answering with a setup hint instead of a silent failure.
+ */
+async function requireWorkspaceProvider(env: AppBindings, organizationId: string): Promise<AIProvider> {
+  if (!(await readAiEnabled(env.DB, organizationId)))
+    throw new HttpError(
+      403,
+      "ai_disabled",
+      "AI assistance is disabled for this workspace. An admin can enable it in Settings.",
+    );
+  const provider = resolveAIProvider(env);
+  if (!provider)
+    throw new HttpError(
+      503,
+      "ai_unavailable",
+      "AI assistance is not configured. Set OPENAI_API_KEY on the Worker to enable it.",
+    );
+  return provider;
 }
 
 async function loadThread(database: D1Database, organizationId: string, ticketId: string) {
@@ -74,8 +87,9 @@ assistantRoutes.use("*", requireAuth);
 assistantRoutes.post("/summarize", validate("json", ticketThreadInput), async (context) => {
   const tenant = await authorizeAssistantRequest(context);
   const input = context.req.valid("json");
+  const provider = await requireWorkspaceProvider(context.env, tenant.organizationId);
   const thread = await loadThread(context.env.DB, tenant.organizationId, input.ticketId);
-  const summary = await requireProvider(context.env).summarize({
+  const summary = await provider.summarize({
     subject: thread.ticket.subject,
     messages: thread.thread ? [thread.thread] : [],
   });
@@ -85,8 +99,9 @@ assistantRoutes.post("/summarize", validate("json", ticketThreadInput), async (c
 assistantRoutes.post("/draft", validate("json", ticketThreadInput), async (context) => {
   const tenant = await authorizeAssistantRequest(context);
   const input = context.req.valid("json");
+  const provider = await requireWorkspaceProvider(context.env, tenant.organizationId);
   const thread = await loadThread(context.env.DB, tenant.organizationId, input.ticketId);
-  const draft = await requireProvider(context.env).draftReply({
+  const draft = await provider.draftReply({
     subject: thread.ticket.subject,
     messages: thread.thread ? [thread.thread] : [],
     instruction: input.instruction,
@@ -97,8 +112,9 @@ assistantRoutes.post("/draft", validate("json", ticketThreadInput), async (conte
 assistantRoutes.post("/classify", validate("json", ticketThreadInput), async (context) => {
   const tenant = await authorizeAssistantRequest(context);
   const input = context.req.valid("json");
+  const provider = await requireWorkspaceProvider(context.env, tenant.organizationId);
   const thread = await loadThread(context.env.DB, tenant.organizationId, input.ticketId);
-  const classification = await requireProvider(context.env).classify({
+  const classification = await provider.classify({
     subject: thread.ticket.subject,
     body: thread.thread,
   });

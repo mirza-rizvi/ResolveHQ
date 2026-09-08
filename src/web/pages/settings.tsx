@@ -1,6 +1,6 @@
 import { MailRecovery } from "../components/mail-recovery";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { CheckCircle2, KeyRound, Mail, ShieldCheck, TriangleAlert } from "lucide-react";
+import { CheckCircle2, KeyRound, Mail, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { useAuth } from "@/web/auth";
 import { useToast } from "@/web/components/toast";
 import { Button, Input } from "@/web/components/ui";
@@ -17,6 +17,7 @@ interface SettingsData {
     disabledAt: string | null;
   }>;
   mail: { resendConfigured: boolean; webhookConfigured: boolean };
+  ai: { available: boolean; enabled: boolean };
 }
 interface MailCapture {
   id: string;
@@ -78,6 +79,20 @@ export function SettingsPage() {
       await load();
     } catch (reason) {
       setError(errorMessage(reason, "Inbox could not be added."));
+    }
+  }
+  const [aiBusy, setAiBusy] = useState(false);
+  async function setAiAssistance(enabled: boolean) {
+    setAiBusy(true);
+    setError("");
+    try {
+      await api("/organization/settings", { method: "PATCH", body: JSON.stringify({ aiEnabled: enabled }) });
+      setMessage(enabled ? "AI assistance enabled for this workspace." : "AI assistance disabled for this workspace.");
+      await load();
+    } catch (reason) {
+      setError(errorMessage(reason, "AI setting could not be saved."));
+    } finally {
+      setAiBusy(false);
     }
   }
   async function changePassword(event: FormEvent<HTMLFormElement>) {
@@ -215,6 +230,45 @@ export function SettingsPage() {
           </div>
         </dl>
       </section>
+      <section className="settings-section">
+        <div>
+          <h2>
+            <Sparkles size={18} />
+            AI assistance
+          </h2>
+          <p>
+            Off by default. When enabled, AI drafting and summaries send this workspace's ticket conversations to
+            OpenAI for processing, subject to OpenAI's data policies.
+          </p>
+        </div>
+        <div className="settings-inboxes">
+          <dl className="readiness-list">
+            <div>
+              <dt>OpenAI API key</dt>
+              <dd>{data.ai.available ? "Configured" : "Missing"}</dd>
+            </div>
+            <div>
+              <dt>This workspace</dt>
+              <dd>{data.ai.enabled ? "Enabled" : "Disabled"}</dd>
+            </div>
+          </dl>
+          {canManage && data.ai.available && (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void setAiAssistance(!data.ai.enabled);
+              }}
+            >
+              <Button type="submit" variant="secondary" disabled={aiBusy}>
+                {data.ai.enabled ? "Disable AI assistance" : "Enable AI assistance"}
+              </Button>
+            </form>
+          )}
+          {!data.ai.available && (
+            <p className="settings-empty">Set OPENAI_API_KEY on the Worker to make AI available to workspaces.</p>
+          )}
+        </div>
+       </section>
       {canManage && <MailRecovery />}
       {(captures || captureError) && (
         <section className="settings-section">

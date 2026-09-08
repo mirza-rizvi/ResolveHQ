@@ -7,8 +7,10 @@ import {
   organizationInvitations,
   organizationMemberships,
   organizations,
+  settings,
   users,
 } from "resolve-server/db/schema";
+import { AI_SETTING_KEY, readAiEnabled } from "resolve-server/organizations/settings";
 import { requireAuth, requireRole } from "resolve-server/auth/middleware";
 import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
@@ -50,6 +52,7 @@ organizationRoutes.get("/members", async (context) => {
 organizationRoutes.get("/settings", async (context) => {
   const tenant = context.get("tenant");
   const db = createDb(context.env.DB);
+  const aiEnabled = await readAiEnabled(context.env.DB, tenant.organizationId);
   const [workspace, inboxRows] = await Promise.all([
     db
       .select({ id: organizations.id, name: organizations.name, slug: organizations.slug })
@@ -76,22 +79,43 @@ organizationRoutes.get("/settings", async (context) => {
       resendConfigured: Boolean(context.env.RESEND_API_KEY),
       webhookConfigured: Boolean(context.env.RESEND_WEBHOOK_SECRET),
     },
-    ai: { enabled: Boolean(context.env.OPENAI_API_KEY) },
+    ai: { available: Boolean(context.env.OPENAI_API_KEY), enabled: aiEnabled },
   });
 });
 
 organizationRoutes.patch(
   "/settings",
   requireRole("admin"),
-  validate("json", z.object({ name: z.string().trim().min(2).max(120) })),
+  validate(
+    "json",
+    z
+      .object({ name: z.string().trim().min(2).max(120).optional(), aiEnabled: z.boolean().optional() })
+      .refine((input) => input.name !== undefined || input.aiEnabled !== undefined, { message: "Nothing to update." }),
+  ),
   async (context) => {
     const tenant = context.get("tenant");
     const input = context.req.valid("json");
-    await createDb(context.env.DB)
-      .update(organizations)
-      .set({ name: input.name, updatedAt: new Date() })
-      .where(eq(organizations.id, tenant.organizationId));
-    return context.json({ workspace: { id: tenant.organizationId, name: input.name } });
+    const database = createDb(context.env.DB);
+    if (input.name !== undefined)
+      await database
+        .update(organizations)
+        .set({ name: input.name, updatedAt: new Date() })
+        .where(eq(organizations.id, tenant.organizationId));
+    if (input.aiEnabled !== undefined)
+      await database
+        .insert(settings)
+        .values({
+          organizationId: tenant.organizationId,
+          key: AI_SETTING_KEY,
+          value: input.aiEnabled,
+          updatedByUserId: tenant.userId,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [settings.organizationId, settings.key],
+          set: { value: input.aiEnabled, updatedByUserId: tenant.userId, updatedAt: new Date() },
+        });
+    return context.json({ ok: true });
   },
 );
 

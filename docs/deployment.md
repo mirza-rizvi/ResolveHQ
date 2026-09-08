@@ -16,7 +16,7 @@ The deployment flow reads `wrangler.jsonc` and provisions everything ResolveHQ n
 
 The flow reads the active entries in `.dev.vars.example`: supply a unique `SESSION_PEPPER` (at least 32 random characters) and keep `DEV_MAIL_MODE=disabled`. Configure optional `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `SYSTEM_MAIL_FROM`, and `APP_URL` afterward in Worker secrets/settings; commented example entries are not configuration. D1 migrations are applied as part of `npm run deploy` (`wrangler d1 migrations apply DB --remote`, then `wrangler deploy`), which the deploy flow runs on your behalf.
 
-For opt-in AI assistance in the composer, add `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets. Without a key the AI controls stay hidden and the Worker makes no AI requests.
+For AI assistance, add `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets. A key only makes the feature available: each workspace opts in through Settings → AI assistance, which discloses that ticket conversations are sent to OpenAI. Without a key the AI controls stay hidden and the Worker makes no AI requests.
 
 Workers Free is supported subject to CPU and service quotas; a successful deployment alone does not prove that authentication or MIME parsing fits the Free CPU allowance. Queues are available on Free. Activate R2 in the Cloudflare dashboard and complete its subscription checkout separately; this does not require Workers Paid. See the [audit, limits, and recovery guide](cloudflare-free.md).
 
@@ -28,7 +28,7 @@ Workers Free is supported subject to CPU and service quotas; a successful deploy
 - `RESEND_API_KEY` is optional; required to actually send outbound mail.
 - `RESEND_WEBHOOK_SECRET` is optional; required to verify Resend delivery webhooks.
 - `SYSTEM_MAIL_FROM` sets the sender used for password reset and invitation email. For production, use an address on a Resend-verified domain; the default workers.dev sender usually cannot send through Resend.
-- `AUTH_TIMING_SAMPLE_RATE` defaults to `0` (disabled). Set a fraction such as `0.01` temporarily for anonymous elapsed timing records; inspect Workers CPU metrics separately.
+- `TICKET_RETENTION_DAYS` is optional. Set a whole number of days (1–3650) and the 5-minute cron permanently deletes resolved and closed tickets whose last activity is older, including their attachments and in-flight mail. Unset keeps everything until you erase it manually.
 
 ## First-run setup
 

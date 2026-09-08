@@ -18,6 +18,14 @@ ResolveHQ is a Cloudflare-native, self-hostable helpdesk for small support teams
 - Notify agents of assignments and customer replies in-app, and work comfortably in light or dark mode.
 - Export everything stored about a customer as JSON, or erase it with a durable, resumable workflow that cancels queued mail.
 - Recover automatically: a five-minute cron job retries stalled mail jobs and cleans up staging and orphaned data.
+- Control AI assistance per workspace: it stays off until an admin enables it in Settings, and only then are ticket conversations sent to OpenAI.
+- Set `TICKET_RETENTION_DAYS` (for example `365`) to have the scheduled sweep permanently delete resolved and closed tickets older than that window, including attachments.
+
+## Interface
+
+The workspace uses a Slack-inspired aubergine sidebar, self-hosted Lato typography, Lucide icons, and Radix UI primitives. Theme-aware controls and status colors support light and dark workspaces. On mobile, bottom navigation and a keyboard-accessible workspace drawer keep all destinations available; ticket columns adapt to preserve subject readability.
+
+Use **Cmd/Ctrl+K** to jump between pages. The sidebar dock contains notifications, theme switching, and account actions.
 
 ## How it works
 
@@ -59,7 +67,8 @@ The Vite application runs on `http://localhost:5173` and proxies `/api` to Wrang
 
 ## Optional configuration
 
-- **AI assistance**: set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets to enable AI drafts, summaries, and classification in the composer. Without a key the feature stays hidden and no AI calls are made.
+- **AI assistance**: set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets to make AI available. Each workspace still opts in through Settings; without a key the feature stays hidden and no AI calls are made.
+- **Retention**: set `TICKET_RETENTION_DAYS` as a Worker variable to automatically delete resolved and closed tickets (with attachments) after that many days. Unset means nothing is deleted automatically.
 
 ## Not yet implemented
 
