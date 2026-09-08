@@ -5,8 +5,8 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #17191c;
-  background: #f6f7f9;
+  color: var(--ink);
+  background: var(--ground);
   font-synthesis: none;
   --ink: #17191c;
   --muted: #68707b;
@@ -25,9 +25,60 @@
   --red-soft: #fff0ef;
   --green: #16835d;
   --graphite: #17191c;
+  --skeleton: #f2f4f7;
+  --skeleton-strong: #e9edf2;
+  --focus-ring: rgba(37, 99, 235, 0.12);
+  --badge-neutral-ink: #59616c;
+  --badge-neutral-bg: #eef0f3;
+  --badge-green-ink: #126a4b;
+  --badge-green-bg: #e3f3ec;
+  --badge-amber-ink: #875000;
+  --badge-amber-bg: #fff0c9;
+  --badge-red-ink: #a22d29;
+  --badge-red-bg: #ffe3e1;
+  --badge-blue-ink: #1e55b6;
+  --badge-blue-bg: #e4edff;
+  --badge-violet-ink: #6544a1;
+  --badge-violet-bg: #eee7ff;
   --control: 34px;
   --radius: 6px;
   color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e8ebf0;
+  --muted: #9aa3ae;
+  --quiet: #8d97a3;
+  --ground: #0f1115;
+  --surface: #171a20;
+  --surface-subtle: #1d2128;
+  --rule: #2a303a;
+  --rule-strong: #3b424e;
+  --blue: #7bacff;
+  --blue-dark: #98bfff;
+  --blue-soft: #182640;
+  --amber: #e2a944;
+  --amber-soft: #2c2413;
+  --red: #ff8580;
+  --red-soft: #332020;
+  --green: #4ec28d;
+  --graphite: #0b0d11;
+  --skeleton: #1a1e25;
+  --skeleton-strong: #22262e;
+  --focus-ring: rgba(123, 172, 255, 0.22);
+  --badge-neutral-ink: #a8b0bb;
+  --badge-neutral-bg: #23272e;
+  --badge-green-ink: #7dd3ab;
+  --badge-green-bg: #15291f;
+  --badge-amber-ink: #ecc06a;
+  --badge-amber-bg: #2b2410;
+  --badge-red-ink: #f2a29e;
+  --badge-red-bg: #2e1b1a;
+  --badge-blue-ink: #9ec2ff;
+  --badge-blue-bg: #16233c;
+  --badge-violet-ink: #c3b0f5;
+  --badge-violet-bg: #221c33;
 }
 * {
   box-sizing: border-box;
@@ -147,17 +198,17 @@ a {
   height: 38px;
   padding: 0 11px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 5px;
   font-size: 13px;
 }
 .input::placeholder {
-  color: #68717d;
+  color: var(--quiet);
 }
 .input:focus {
   border-color: var(--blue);
-  outline: 3px solid rgba(37, 99, 235, 0.12);
+  outline: 3px solid var(--focus-ring);
 }
 .badge {
   display: inline-flex;
@@ -170,28 +221,28 @@ a {
   text-transform: capitalize;
 }
 .badge-neutral {
-  color: #59616c;
-  background: #eef0f3;
+  color: var(--badge-neutral-ink);
+  background: var(--badge-neutral-bg);
 }
 .badge-green {
-  color: #126a4b;
-  background: #e3f3ec;
+  color: var(--badge-green-ink);
+  background: var(--badge-green-bg);
 }
 .badge-amber {
-  color: #875000;
-  background: #fff0c9;
+  color: var(--badge-amber-ink);
+  background: var(--badge-amber-bg);
 }
 .badge-red {
-  color: #a22d29;
-  background: #ffe3e1;
+  color: var(--badge-red-ink);
+  background: var(--badge-red-bg);
 }
 .badge-blue {
-  color: #1e55b6;
-  background: #e4edff;
+  color: var(--badge-blue-ink);
+  background: var(--badge-blue-bg);
 }
 .badge-violet {
-  color: #6544a1;
-  background: #eee7ff;
+  color: var(--badge-violet-ink);
+  background: var(--badge-violet-bg);
 }
 kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -201,7 +252,7 @@ kbd {
 .route-loading,
 .rich-composer-loading {
   min-height: 110px;
-  background: #f2f4f7;
+  background: var(--skeleton);
   animation: loading-pulse 1.2s ease-in-out infinite;
 }
 .route-loading {
@@ -209,7 +260,7 @@ kbd {
 }
 @keyframes loading-pulse {
   50% {
-    background: #e9edf2;
+    background: var(--skeleton-strong);
   }
 }
 @media (prefers-reduced-motion: reduce) {

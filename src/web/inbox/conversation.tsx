@@ -1,4 +1,9 @@
-import { ArrowLeft, Check, MessageSquareText, PanelRightOpen, X } from "lucide-react";
+import { useState } from "react";
+import { ArrowLeft, Check, MessageSquareText, PanelRightOpen, Trash2, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/web/auth";
+import { useToast } from "@/web/components/toast";
+import { api, errorMessage } from "@/web/lib/api";
 import { Button } from "@/web/components/ui";
 import type { DraftStatus } from "@/web/hooks/use-draft";
 import { Composer } from "./composer";
@@ -12,8 +17,10 @@ interface ConversationPanelProps {
   error: string;
   onRetry: () => void;
   hasOlder?: boolean;
+  canLoadOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
+  olderError?: string;
   members: Member[];
   teams: Team[];
   availableTags: Tag[];
@@ -41,8 +48,10 @@ export function ConversationPanel({
   error,
   onRetry,
   hasOlder,
+  canLoadOlder,
   loadingOlder,
   onLoadOlder,
+  olderError,
   members,
   teams,
   availableTags,
@@ -62,6 +71,27 @@ export function ConversationPanel({
   draftStatus,
   draftSavedAt,
 }: ConversationPanelProps) {
+  const { session } = useAuth();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const [deleting, setDeleting] = useState(false);
+  const canManage = session?.role === "owner" || session?.role === "admin";
+
+  async function deleteTicket() {
+    if (!conversation || !window.confirm(`Delete ticket #${conversation.ticket.number}? This cannot be undone.`))
+      return;
+    setDeleting(true);
+    try {
+      await api(`/privacy/tickets/${conversation.ticket.id}`, { method: "DELETE" });
+      toast.push(`Ticket #${conversation.ticket.number} deleted.`, "success");
+      navigate("/inbox");
+    } catch (reason) {
+      toast.push(errorMessage(reason, "The ticket could not be deleted."), "error");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <section className="conversation-panel" aria-label="Selected conversation">
       {error ? (
@@ -107,6 +137,18 @@ export function ConversationPanel({
                 <Check size={14} />
                 {conversation.ticket.status === "resolved" ? "Resolved" : "Resolve"}
               </Button>
+              {canManage && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Delete ticket"
+                  title="Delete ticket"
+                  disabled={deleting}
+                  onClick={() => void deleteTicket()}
+                >
+                  <Trash2 size={16} />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -207,8 +249,16 @@ export function ConversationPanel({
             </div>
           </div>
           <div className="thread">
+            {olderError && (
+              <p className="thread-older-error" role="alert">
+                {olderError}
+                <button type="button" onClick={onLoadOlder}>
+                  Try again
+                </button>
+              </p>
+            )}
             {hasOlder && (
-              <Button variant="secondary" onClick={onLoadOlder} disabled={loadingOlder}>
+              <Button variant="secondary" onClick={onLoadOlder} disabled={loadingOlder || canLoadOlder === false}>
                 {loadingOlder ? "Loading…" : "Load older messages"}
               </Button>
             )}

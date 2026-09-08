@@ -6,4 +6,6 @@ DEV_MAIL_MODE=disabled
 # RESEND_WEBHOOK_SECRET=whsec_...
 # SYSTEM_MAIL_FROM=no-reply@example.com
 # APP_URL=https://your-worker.example.com
+# OPENAI_API_KEY=sk-...
+# OPENAI_MODEL=gpt-4o-mini
 # AUTH_TIMING_SAMPLE_RATE=0

@@ -7,7 +7,7 @@ export interface AppBindings {
   ASSETS: Fetcher;
   INBOUND_MAIL_QUEUE: Queue<MailQueueMessage>;
   OUTBOUND_MAIL_QUEUE: Queue<MailQueueMessage>;
-  /** Dead-letter queues. Declared as producers so one-click deploys provision them; nothing consumes them yet. */
+  /** Dead-letter consumers retain stopped work for administrative recovery. */
   INBOUND_MAIL_DLQ?: Queue<MailQueueMessage>;
   OUTBOUND_MAIL_DLQ?: Queue<MailQueueMessage>;
   AUTH_RATE_LIMIT: RateLimit;
@@ -19,12 +19,14 @@ export interface AppBindings {
   RESEND_API_KEY?: string;
   RESEND_WEBHOOK_SECRET?: string;
   SYSTEM_MAIL_FROM?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_MODEL?: string;
 }
 
 export type MailQueueMessage =
-  | { kind: "inbound-mail"; eventId: string; stagingObjectKey: string; from?: string; to?: string }
-  | { kind: "outbound-mail"; jobId: string }
-  | { kind: "maintenance"; taskId: string };
+  | { kind: "inbound-mail"; eventId: string; stagingObjectKey: string; from?: string; to?: string; generation?: number }
+  | { kind: "outbound-mail"; jobId: string; generation?: number }
+  | { kind: "maintenance"; taskId: string; generation?: number };
 
 export type Role = "owner" | "admin" | "agent";
 

@@ -9,10 +9,14 @@ ResolveHQ is a Cloudflare-native, self-hostable helpdesk for small support teams
 - Run a shared inbox with tenant-isolated customers, tickets, assignment, status, priority, tags, and full-text search.
 - Sign up as owner, invite teammates, and manage Owner/Admin/Agent roles with a workspace switcher across organizations.
 - Thread email correctly per RFC 5322, resistant to subject-line spoofing across tickets.
-- Receive mail through Cloudflare Email Routing and send it through Resend, with delivery status, retries, and idempotent webhooks.
+- Receive mail through Cloudflare Email Routing and send it through Resend, with delivery status, retries, and idempotent webhooks. Outbound replies carry their linked attachments, and dead-letter queues drain to durable, recoverable records.
 - Attach files to tickets through validated, authorized R2 uploads.
-- Reply faster with saved replies, internal notes, and a responsive three-pane inbox with optimistic-version conflict handling.
+- Reply faster with saved replies, internal notes, AI-drafted responses (opt-in), and a responsive three-pane inbox with optimistic-version conflict handling.
 - Reset passwords and accept invitations through system email sent via the same provider seam as ticket mail.
+- Publish a public help center from knowledge-base articles, with drafts kept private to your team.
+- Track volume and response speed in Reports, export any window to CSV, and automate triage with rule-based Automations.
+- Notify agents of assignments and customer replies in-app, and work comfortably in light or dark mode.
+- Export everything stored about a customer as JSON, or erase it with a durable, resumable workflow that cancels queued mail.
 - Recover automatically: a five-minute cron job retries stalled mail jobs and cleans up staging and orphaned data.
 
 ## How it works
@@ -53,17 +57,13 @@ The Vite application runs on `http://localhost:5173` and proxies `/api` to Wrang
 - [Architecture](docs/architecture.md)
 - [Security](SECURITY.md)
 
+## Optional configuration
+
+- **AI assistance**: set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets to enable AI drafts, summaries, and classification in the composer. Without a key the feature stays hidden and no AI calls are made.
+
 ## Not yet implemented
 
-- Dead-letter queue consumers: the DLQs exist and receive exhausted retries, but nothing drains them yet.
-- AI provider wiring: the `AIProvider` seam exists; the default implementation reports AI as unavailable.
-- Attachments inside outbound email: attachments are stored and linked to messages, but not attached to the outgoing email itself.
-- Pagination / load-more UI: the API is cursor-paginated; the UI does not yet expose loading further pages.
-- Notifications UI: notification rows are written; there is no bell or notification center.
-- Dark mode.
-- Team membership editing.
-- Entity deletion / GDPR export or erasure.
-- Knowledge Base, Reports, and Automations.
+- Multi-language interface and notifications outside the app (email digests).
 
 ## License
 

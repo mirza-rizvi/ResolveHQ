@@ -1,4 +1,5 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { queueStatuses } from "@/web/inbox/queues";
 import type { QueueCounts, TicketSummary } from "@/web/inbox/types";
 import { api } from "@/web/lib/api";
@@ -24,24 +25,42 @@ export function ticketSearchParams({ queue, priority, q }: TicketFilters) {
 export const pollInterval = () => (document.visibilityState === "visible" ? 15_000 : 60_000);
 
 export function useTickets(filters: TicketFilters) {
-  // The key carries only the filters, so selecting a ticket neither restarts
-  // the poll nor drops the list, and `keepPreviousData` keeps the previous
-  // page on screen instead of flashing the skeleton on every filter change.
-  const query = useQuery({
+  const query = useInfiniteQuery({
     queryKey: ["tickets", filters],
-    queryFn: () =>
-      api<{ tickets: TicketSummary[] }>(`/tickets?${ticketSearchParams(filters)}`).then((result) => result.tickets),
+    queryFn: ({ pageParam, signal }) => {
+      const search = ticketSearchParams(filters);
+      if (pageParam) search.set("cursor", pageParam);
+      return api<{ tickets: TicketSummary[]; nextCursor: string | null }>(`/tickets?${search}`, { signal });
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
     placeholderData: keepPreviousData,
     refetchInterval: pollInterval,
   });
+  const tickets = useMemo(() => {
+    const seen = new Set<string>();
+    return (
+      query.data?.pages
+        .flatMap((page) => page.tickets)
+        .filter((ticket) => {
+          if (seen.has(ticket.id)) return false;
+          seen.add(ticket.id);
+          return true;
+        }) ?? []
+    );
+  }, [query.data]);
   return {
-    tickets: query.data ?? [],
+    tickets,
+    hasMore: query.hasNextPage,
+    loadingMore: query.isFetchingNextPage,
+    canLoadMore: !query.isFetching && !query.isPlaceholderData,
+    loadMore: () => void query.fetchNextPage({ cancelRefetch: false }),
+    loadMoreError: query.isFetchNextPageError ? query.error : null,
     isPending: query.isPending,
     isFetching: query.isFetching,
-    // True while the rows on screen are still the previous filters' — callers
-    // that act on the list (auto-select) have to wait for the real page.
+    // Auto-selection must wait until these filters have their own results.
     isPlaceholderData: query.isPlaceholderData,
-    error: query.error,
+    error: query.isFetchNextPageError ? null : query.error,
     refetch: query.refetch,
   };
 }

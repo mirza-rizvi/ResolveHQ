@@ -121,7 +121,7 @@
     height: 54px;
     grid-template-columns: repeat(5, 1fr);
     padding-bottom: env(safe-area-inset-bottom);
-    background: #fff;
+    background: var(--surface);
     border-top: 1px solid var(--rule);
   }
   .mobile-navigation a,
@@ -222,7 +222,7 @@
   }
   .auth-surface {
     display: block;
-    background: #fff;
+    background: var(--surface);
   }
   .auth-panel {
     max-width: 520px;

@@ -686,6 +686,74 @@ export const attachmentUploads = sqliteTable(
   },
   (table) => [index("attachment_uploads_created_idx").on(table.createdAt)],
 );
+export const knowledgeBaseArticles = sqliteTable(
+  "knowledge_base_articles",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    slug: text("slug").notNull(),
+    category: text("category"),
+    body: text("body").notNull(),
+    status: text("status", { enum: ["draft", "published"] })
+      .notNull()
+      .default("draft"),
+    version: integer("version").notNull().default(1),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("kb_organization_slug_uidx").on(table.organizationId, table.slug),
+    index("kb_organization_status_idx").on(table.organizationId, table.status, table.updatedAt),
+  ],
+);
+
+export const automationRules = sqliteTable(
+  "automation_rules",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    position: integer("position").notNull().default(0),
+    conditions: text("conditions", { mode: "json" }).$type<unknown>().notNull(),
+    actions: text("actions", { mode: "json" }).$type<unknown>().notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (table) => [index("automation_rules_organization_idx").on(table.organizationId, table.position, table.id)],
+);
+
+export const automationRuns = sqliteTable(
+  "automation_runs",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    ruleId: text("rule_id")
+      .notNull()
+      .references(() => automationRules.id, { onDelete: "cascade" }),
+    ticketId: text("ticket_id")
+      .notNull()
+      .references(() => tickets.id, { onDelete: "cascade" }),
+    eventKey: text("event_key").notNull(),
+    applied: text("applied").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("automation_runs_event_uidx").on(table.organizationId, table.eventKey, table.ruleId),
+    index("automation_runs_ticket_idx").on(table.organizationId, table.ticketId),
+    index("automation_runs_rule_idx").on(table.organizationId, table.ruleId, table.createdAt),
+  ],
+);
 
 export const ticketSearchRows = sqliteTable(
   "ticket_search_rows",
@@ -695,4 +763,14 @@ export const ticketSearchRows = sqliteTable(
     ticketId: text("ticket_id").notNull(),
   },
   (table) => [uniqueIndex("ticket_search_rows_ticket_idx").on(table.organizationId, table.ticketId)],
+);
+export const mailDlqEvents = sqliteTable(
+  "mail_dlq_events",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    reference: text("reference").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [uniqueIndex("mail_dlq_events_reference_uidx").on(table.id)],
 );

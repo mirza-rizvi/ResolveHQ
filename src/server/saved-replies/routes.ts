@@ -5,6 +5,7 @@ import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
 import { savedReplies } from "resolve-server/db/schema";
 import { newId } from "resolve-server/lib/id";
+import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import type { HonoEnv } from "resolve-server/types";
 
@@ -40,5 +41,13 @@ savedReplyRoutes.patch("/:id", validate("json", inputSchema.partial()), async (c
     .update(savedReplies)
     .set({ ...context.req.valid("json"), updatedAt: new Date() })
     .where(and(eq(savedReplies.id, context.req.param("id")), eq(savedReplies.organizationId, tenant.organizationId)));
+  return context.json({ ok: true });
+});
+savedReplyRoutes.delete("/:id", async (context) => {
+  const tenant = context.get("tenant");
+  const result = await createDb(context.env.DB)
+    .delete(savedReplies)
+    .where(and(eq(savedReplies.id, context.req.param("id")), eq(savedReplies.organizationId, tenant.organizationId)));
+  if (!result.meta.changes) throw new HttpError(404, "saved_reply_not_found", "Saved reply not found.");
   return context.json({ ok: true });
 });

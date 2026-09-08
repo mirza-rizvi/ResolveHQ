@@ -44,6 +44,12 @@ export function InboxPage() {
     isPending: ticketsPending,
     isPlaceholderData: ticketsArePrevious,
     error: ticketsError,
+    hasMore: hasMoreTickets,
+    loadingMore: loadingMoreTickets,
+    canLoadMore: canLoadMoreTickets,
+    loadMore: loadMoreTickets,
+    loadMoreError: moreTicketsError,
+    refetch: retryTickets,
   } = useTickets({ queue, priority, q: search });
   const { counts } = useTicketCounts();
   const conversation = useConversation(ticketId);
@@ -197,6 +203,12 @@ export function InboxPage() {
         params={params}
         loading={ticketsPending}
         error={ticketsError ? errorMessage(ticketsError, "Could not load the queue.") : ""}
+        onRetry={() => void retryTickets()}
+        hasMore={hasMoreTickets}
+        loadingMore={loadingMoreTickets}
+        canLoadMore={canLoadMoreTickets}
+        onLoadMore={loadMoreTickets}
+        loadMoreError={moreTicketsError ? errorMessage(moreTicketsError) : ""}
         query={query}
         onQueryChange={setQuery}
         searchInputRef={searchInput}
@@ -227,6 +239,8 @@ export function InboxPage() {
         hasOlder={conversation.hasOlder}
         loadingOlder={conversation.loadingOlder}
         onLoadOlder={conversation.loadOlder}
+        canLoadOlder={conversation.canLoadOlder}
+        olderError={conversation.olderError ? errorMessage(conversation.olderError) : ""}
         members={workspace.members}
         teams={workspace.teams}
         availableTags={workspace.tags}

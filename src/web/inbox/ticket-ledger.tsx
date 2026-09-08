@@ -12,6 +12,12 @@ interface TicketLedgerProps {
   params: URLSearchParams;
   loading: boolean;
   error: string;
+  onRetry: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  canLoadMore: boolean;
+  loadMoreError: string;
+  onLoadMore: () => void;
   query: string;
   onQueryChange: (value: string) => void;
   searchInputRef: React.RefObject<HTMLInputElement | null>;
@@ -32,6 +38,12 @@ export function TicketLedger({
   params,
   loading,
   error,
+  onRetry,
+  hasMore,
+  loadingMore,
+  canLoadMore,
+  loadMoreError,
+  onLoadMore,
   query,
   onQueryChange,
   searchInputRef,
@@ -60,7 +72,7 @@ export function TicketLedger({
         <div className="rundown-title">
           <h1>Inbox</h1>
           <span>
-            {tickets.length} in {queueLabel(queue)}
+            {tickets.length} {hasMore ? "loaded" : "in"} {queueLabel(queue)}
           </span>
         </div>
         <Button size="small" onClick={onCreateTicket}>
@@ -120,8 +132,14 @@ export function TicketLedger({
       <div className="ticket-table-wrap">
         {loading ? (
           <LedgerSkeleton />
-        ) : error ? (
-          <EmptyLedger title="Queue unavailable" detail={error} />
+        ) : error && !tickets.length ? (
+          <div className="empty-ledger" role="alert">
+            <h2>Queue unavailable</h2>
+            <p>{error}</p>
+            <Button variant="secondary" size="small" onClick={onRetry}>
+              Retry tickets
+            </Button>
+          </div>
         ) : tickets.length === 0 ? (
           <EmptyLedger title="Queue clear" detail="New conversations will appear here automatically." />
         ) : (
@@ -175,6 +193,26 @@ export function TicketLedger({
               ))}
             </tbody>
           </table>
+        )}
+        {error && tickets.length > 0 && (
+          <div className="ledger-empty" role="alert">
+            <p>{error}</p>
+            <Button variant="secondary" size="small" onClick={onRetry}>
+              Retry refresh
+            </Button>
+          </div>
+        )}
+        {(hasMore || loadMoreError) && (
+          <div className="ledger-empty">
+            {loadMoreError && (
+              <p className="form-error" role="alert">
+                {loadMoreError}
+              </p>
+            )}
+            <Button variant="secondary" size="small" onClick={onLoadMore} disabled={!canLoadMore}>
+              {loadingMore ? "Loading more tickets…" : loadMoreError ? "Retry more tickets" : "Load more tickets"}
+            </Button>
+          </div>
         )}
       </div>
     </section>

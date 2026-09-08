@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Bell,
   BookOpen,
   ChartNoAxesColumn,
   ChevronDown,
@@ -7,8 +8,10 @@ import {
   Command,
   Inbox,
   LogOut,
+  Moon,
   Search,
   Settings,
+  Sun,
   Users,
   Workflow,
   X,
@@ -17,10 +20,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/web/auth";
 import { useDialogFocus } from "@/web/hooks/use-dialog-focus";
-import { errorMessage } from "@/web/lib/api";
-import { chordPending, consumeChord, startChord } from "@/web/lib/chord";
-import { useToast } from "./toast";
+import { api, errorMessage } from "@/web/lib/api";
 import { Button } from "./ui";
+import { useToast } from "./toast";
+import { chordPending, consumeChord, startChord } from "@/web/lib/chord";
 
 const navigation = [
   { label: "Inbox", href: "/inbox", icon: Inbox, shortcut: "I", primary: true },
@@ -41,9 +44,29 @@ export function AppShell() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [accountOpen, setAccountOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(
+    () => (localStorage.getItem("resolvehq-theme") as "light" | "dark" | null) ?? "light",
+  );
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const accountRef = useRef<HTMLDivElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
   const closeCommand = useCallback(() => setCommandOpen(false), []);
   const commandDialogRef = useDialogFocus(commandOpen, closeCommand);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("resolvehq-theme", theme);
+  }, [theme]);
+  const loadNotifications = useCallback(() => {
+    api<{ notifications: NotificationRow[] }>("/operations/notifications")
+      .then((result) => setNotifications(result.notifications))
+      .catch(() => setNotifications([]));
+  }, []);
+  useEffect(() => {
+    loadNotifications();
+    const interval = window.setInterval(loadNotifications, 30_000);
+    return () => window.clearInterval(interval);
+  }, [loadNotifications]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -83,13 +106,15 @@ export function AppShell() {
   }, [navigate]);
 
   useEffect(() => {
-    if (!accountOpen) return;
+    if (!accountOpen && !notificationsOpen) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (!accountRef.current?.contains(event.target as Node)) setAccountOpen(false);
+      const target = event.target as Node;
+      if (!accountRef.current?.contains(target)) setAccountOpen(false);
+      if (!notificationsRef.current?.contains(target)) setNotificationsOpen(false);
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [accountOpen]);
+  }, [accountOpen, notificationsOpen]);
 
   const signOut = async () => {
     setAccountOpen(false);
@@ -154,6 +179,68 @@ export function AppShell() {
           <span>Search or jump to</span>
           <kbd>⌘K</kbd>
         </button>
+        <div className="header-controls">
+          <button
+            className="theme-toggle"
+            type="button"
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={theme === "dark" ? "Light mode" : "Dark mode"}
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+          <div className="notifications-menu" ref={notificationsRef}>
+            <button
+              className="notifications-trigger"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={notificationsOpen}
+              aria-label={
+                notifications.some((row) => !row.readAt)
+                  ? `Notifications, ${notifications.filter((row) => !row.readAt).length} unread`
+                  : "Notifications"
+              }
+              onClick={() => setNotificationsOpen((open) => !open)}
+            >
+              <Bell size={15} />
+              {notifications.some((row) => !row.readAt) && <i aria-hidden="true" />}
+            </button>
+            {notificationsOpen && (
+              <div className="notifications-popover" role="menu" aria-label="Notifications">
+                <header>
+                  <strong>Notifications</strong>
+                  <button type="button" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>
+                    <X size={13} />
+                  </button>
+                </header>
+                {notifications.length ? (
+                  <ul>
+                    {notifications.slice(0, 12).map((row) => (
+                      <li key={row.id} className={row.readAt ? "" : "unread"}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNotificationsOpen(false);
+                            if (row.ticketId) navigate(`/inbox/${row.ticketId}`);
+                            if (!row.readAt)
+                              void api(`/operations/notifications/${row.id}/read`, { method: "POST" }).then(
+                                loadNotifications,
+                              );
+                          }}
+                        >
+                          <span>{row.title}</span>
+                          <small>{new Date(row.createdAt).toLocaleString()}</small>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="notifications-empty">You are all caught up.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
         <div className="account-menu" ref={accountRef}>
           <button
             className="account-trigger"
@@ -269,4 +356,12 @@ export function AppShell() {
       )}
     </div>
   );
+}
+interface NotificationRow {
+  id: string;
+  ticketId: string | null;
+  type: string;
+  title: string;
+  readAt: string | null;
+  createdAt: string;
 }

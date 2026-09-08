@@ -1,6 +1,7 @@
 import type { AppBindings } from "../types";
 import { leaseMs, retryDelay } from "../mail/reliability";
 import { refreshTicketSearch } from "../search/index";
+import { processCustomerErasure } from "../privacy/service";
 
 export async function requestCustomerRefresh(env: AppBindings, organizationId: string, customerId: string) {
   await env.DB.prepare(
@@ -14,14 +15,14 @@ export async function dispatchMaintenance(env: AppBindings) {
   if (!env.MAINTENANCE_QUEUE) return;
   const now = Date.now();
   const rows = await env.DB.prepare(
-    "UPDATE maintenance_tasks SET dispatch_until = ? WHERE id IN (SELECT id FROM maintenance_tasks WHERE status = 'pending' AND attempts < 6 AND lease_until <= ? AND dispatch_until <= ? AND next_attempt_at <= ? ORDER BY next_attempt_at, id LIMIT 20) RETURNING id",
+    "UPDATE maintenance_tasks SET dispatch_until = ? WHERE id IN (SELECT id FROM maintenance_tasks WHERE status = 'pending' AND attempts < 6 AND lease_until <= ? AND dispatch_until <= ? AND next_attempt_at <= ? ORDER BY next_attempt_at, id LIMIT 20) RETURNING id, generation",
   )
     .bind(now + leaseMs, now, now, now)
-    .all<{ id: string }>();
+    .all<{ id: string; generation: number }>();
   if (!rows.results.length) return;
   try {
     await env.MAINTENANCE_QUEUE.sendBatch(
-      rows.results.map(({ id }) => ({ body: { kind: "maintenance", taskId: id } })),
+      rows.results.map(({ id, generation }) => ({ body: { kind: "maintenance", taskId: id, generation } as const })),
     );
   } catch {
     console.error({ event: "maintenance_enqueue_failed" });
@@ -29,12 +30,15 @@ export async function dispatchMaintenance(env: AppBindings) {
 }
 
 /** One invocation handles five items, including retries of interrupted deletes. */
-export async function processMaintenance(env: AppBindings, taskId: string) {
+export async function processMaintenance(env: AppBindings, taskId: string, messageGeneration?: number) {
   const now = Date.now();
+  // A legacy message without a generation still claims; a stale generation (task re-enqueued after a retry) never does.
+  const generationGuard = messageGeneration === undefined ? "" : " AND generation = ?";
+  const generationBinds = messageGeneration === undefined ? [] : [messageGeneration];
   const task = await env.DB.prepare(
-    "UPDATE maintenance_tasks SET lease_until = ?, attempts = attempts + 1 WHERE id = ? AND status = 'pending' AND attempts < 6 AND lease_until <= ? AND next_attempt_at <= ? RETURNING kind, organization_id AS organizationId, customer_id AS customerId, cursor, generation, attempts",
+    `UPDATE maintenance_tasks SET lease_until = ?, attempts = attempts + 1 WHERE id = ? AND status = 'pending' AND attempts < 6 AND lease_until <= ? AND next_attempt_at <= ?${generationGuard} RETURNING kind, organization_id AS organizationId, customer_id AS customerId, cursor, generation, attempts`,
   )
-    .bind(now + leaseMs, taskId, now, now)
+    .bind(now + leaseMs, taskId, now, now, ...generationBinds)
     .first<{
       kind: string;
       organizationId: string;
@@ -106,6 +110,12 @@ export async function processMaintenance(env: AppBindings, taskId: string) {
         await env.DB.prepare("DELETE FROM attachment_uploads WHERE id = ?").bind(row.id).run();
         count++;
       }
+    } else if (task.kind === "erasure") {
+      if (!task.organizationId || !task.customerId) {
+        count = 0;
+      } else {
+        count = await processCustomerErasure(env, task.organizationId, task.customerId);
+      }
     }
     await env.DB.prepare(
       "UPDATE maintenance_tasks SET cursor = ?, status = ?, attempts = 0, dispatch_until = 0, lease_until = 0, next_attempt_at = 0 WHERE id = ? AND generation = ?",
@@ -123,7 +133,8 @@ export async function processMaintenance(env: AppBindings, taskId: string) {
       .bind(task.attempts >= 6 ? "failed" : "pending", now + retryDelay(task.attempts) * 1000, taskId, task.generation)
       .run();
     console.error({ event: "maintenance_failed", operation: task.kind });
-    if (task.attempts >= 6 && env.MAINTENANCE_DLQ) await env.MAINTENANCE_DLQ.send({ kind: "maintenance", taskId });
+    if (task.attempts >= 6 && env.MAINTENANCE_DLQ)
+      await env.MAINTENANCE_DLQ.send({ kind: "maintenance", taskId, generation: task.generation });
   }
 }
 

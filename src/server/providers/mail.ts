@@ -11,6 +11,14 @@ export interface IncomingMail {
   attachments: Array<{ filename: string; contentType: string; body: ArrayBuffer }>;
 }
 
+export interface OutgoingAttachment {
+  filename: string;
+  contentType: string;
+  objectKey: string;
+  size: number;
+  checksum: string;
+}
+
 export interface OutgoingMail {
   from: string;
   to: string;
@@ -19,6 +27,9 @@ export interface OutgoingMail {
   html?: string;
   messageId?: string;
   references?: string[];
+  /** Frozen manifest of linked attachments; bytes resolve from storage on every attempt. */
+  attachmentManifest?: OutgoingAttachment[];
+  attachments?: Array<{ filename: string; contentType: string; content: string }>;
 }
 
 export interface IncomingMailProvider {
@@ -82,6 +93,15 @@ export class ResendMailProvider implements OutgoingMailProvider {
         to: [message.to],
         subject: message.subject,
         text: message.text,
+        ...(message.attachments?.length
+          ? {
+              attachments: message.attachments.map((file) => ({
+                filename: file.filename,
+                content_type: file.contentType,
+                content: file.content,
+              })),
+            }
+          : {}),
         ...(message.html ? { html: message.html } : {}),
         ...(message.messageId || message.references?.length
           ? {

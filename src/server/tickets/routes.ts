@@ -1,4 +1,5 @@
 import { dispatchMail } from "../mail/reliability";
+import { applyAutomations } from "../automations/service";
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -229,6 +230,7 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
     entityId: ticketId,
     metadata: { number: numberRow.number },
   });
+  await applyAutomations(context.env, tenant.organizationId, ticketId, `created:${ticketId}`);
   await dispatchMail(context.env, "outbound-mail", [outboundJobId]);
   return context.json(
     {

@@ -8,6 +8,7 @@ import {
   customers,
   inboundMailEvents,
   messages,
+  notifications,
   outboundMailJobs,
   tickets,
 } from "../db/schema";
@@ -16,11 +17,14 @@ import { newId, normalizeSearch } from "../lib/id";
 import { PostalMimeIncomingProvider } from "../providers/mail";
 import { refreshTicketSearch } from "../search/index";
 import { selectOutgoingProvider } from "./system";
+import { applyAutomations } from "../automations/service";
 import type { AppBindings } from "../types";
 
 const maximumRawMailSize = 25 * 1024 * 1024;
 const maximumAttachmentSize = 15 * 1024 * 1024;
 const maximumThreadReferences = 20;
+const maximumOutboundAttachmentBytes = 20 * 1024 * 1024;
+const maximumOutboundAttachmentFiles = 10;
 const safeMailTypes = new Set([
   "application/pdf",
   "application/zip",
@@ -36,6 +40,55 @@ const safeMailTypes = new Set([
 type InboundPayload =
   | { raw: ArrayBuffer; from?: string; to?: string }
   | { eventId: string; stagingObjectKey: string; from?: string; to?: string };
+
+/** Linked attachments freeze into the envelope as a manifest; bytes resolve per attempt. */
+async function buildAttachmentManifest(env: AppBindings, organizationId: string, messageId: string) {
+  const rows = await env.DB.prepare(
+    "SELECT object_key AS objectKey, filename, content_type AS contentType, size, checksum FROM attachments WHERE organization_id = ? AND message_id = ? ORDER BY created_at, id LIMIT ?",
+  )
+    .bind(organizationId, messageId, maximumOutboundAttachmentFiles)
+    .all<{ objectKey: string; filename: string; contentType: string; size: number; checksum: string }>();
+  const manifest = rows.results;
+  const total = manifest.reduce((sum, file) => sum + file.size, 0);
+  if (total > maximumOutboundAttachmentBytes)
+    throw new MailFailure(
+      "Attachments exceed the 20 MB outbound email limit. Remove a file and resend.",
+      true,
+      "attachments_too_large",
+    );
+  return manifest;
+}
+
+/** Resolves the frozen manifest to provider payloads, verifying every byte before send. */
+export async function resolveOutboundAttachments(
+  bucket: R2Bucket,
+  manifest: Array<{ filename: string; contentType: string; objectKey: string; size: number; checksum: string }>,
+) {
+  const files: Array<{ filename: string; contentType: string; content: string }> = [];
+  for (const entry of manifest) {
+    const object = await bucket.get(entry.objectKey);
+    if (!object || object.size !== entry.size)
+      throw new MailFailure(
+        `The attachment "${entry.filename}" is no longer available. Remove it and resend.`,
+        true,
+        "attachment_missing",
+      );
+    const bytes = await object.arrayBuffer();
+    const checksum = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+    if (checksum !== entry.checksum)
+      throw new MailFailure(
+        `The attachment "${entry.filename}" changed on storage. Remove it and resend.`,
+        true,
+        "attachment_corrupt",
+      );
+    let binary = "";
+    const view = new Uint8Array(bytes);
+    for (let index = 0; index < view.length; index += 0x8000)
+      binary += String.fromCharCode(...view.subarray(index, index + 0x8000));
+    files.push({ filename: entry.filename, contentType: entry.contentType, content: btoa(binary) });
+  }
+  return files;
+}
 
 export async function processInboundMail(env: AppBindings, payload: InboundPayload) {
   const staged = "stagingObjectKey" in payload;
@@ -295,6 +348,20 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
         .run();
       await refreshTicketSearch(env.DB, organizationId, ticket.id);
     }
+    const assigned = await env.DB.prepare(
+      "SELECT assigned_user_id AS assignedUserId FROM tickets WHERE organization_id = ? AND id = ?",
+    )
+      .bind(organizationId, ticket.id)
+      .first<{ assignedUserId: string | null }>();
+    if (assigned?.assignedUserId)
+      await db.insert(notifications).values({
+        id: newId("ntf"),
+        organizationId,
+        userId: assigned.assignedUserId,
+        ticketId: ticket.id,
+        type: "ticket.customer_replied",
+        title: `Customer replied to ticket #${ticket.number}`,
+      });
     await db
       .update(customers)
       .set({
@@ -363,10 +430,7 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
         lastError: null,
       })
       .where(eq(inboundMailEvents.id, eventId));
-    if (!existing)
-      await logMailActivity(db, organizationId, ticket.id, "ticket.customer_replied", "message", messageId, {
-        providerMessageId: mail.providerMessageId,
-      });
+    await applyAutomations(env, organizationId, ticket.id, `inbound:${mail.providerMessageId}`);
     if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
   } catch (error) {
     const terminal = (error instanceof MailFailure && error.terminal) || attempts >= maxAttempts;
@@ -476,6 +540,7 @@ export async function processOutboundMail(
           html: row.html,
           messageId: rfcMessageId,
           references: lastCustomer?.ref ? [lastCustomer.ref] : undefined,
+          attachmentManifest: await buildAttachmentManifest(env, job.organizationId, job.messageId),
         };
     if (job.firstAttemptAt && Date.now() - job.firstAttemptAt >= retryWindowMs)
       throw new MailFailure("Delivery needs review before retrying.", true, "delivery_uncertain");
@@ -483,7 +548,13 @@ export async function processOutboundMail(
       await env.DB.prepare("UPDATE outbound_mail_jobs SET envelope = ?, first_attempt_at = ? WHERE id = ?")
         .bind(JSON.stringify(envelope), Date.now(), job.id)
         .run();
-    const result = await provider.send(envelope, { idempotencyKey: job.idempotencyKey });
+    const resolved: OutgoingMail = {
+      ...envelope,
+      attachments: envelope.attachmentManifest?.length
+        ? await resolveOutboundAttachments(env.ATTACHMENTS, envelope.attachmentManifest)
+        : undefined,
+    };
+    const result = await provider.send(resolved, { idempotencyKey: job.idempotencyKey });
     await db.batch([
       db
         .update(messages)
@@ -599,27 +670,6 @@ export async function resolveInbox(database: D1Database, recipient: string) {
     .prepare("SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? LIMIT 1")
     .bind(recipient)
     .first<{ id: string; organizationId: string }>();
-}
-
-async function logMailActivity(
-  db: ReturnType<typeof createDb>,
-  organizationId: string,
-  ticketId: string,
-  eventType: string,
-  entityType: string,
-  entityId: string,
-  metadata: Record<string, unknown>,
-) {
-  await db.insert(activityLogs).values({
-    id: newId("act"),
-    organizationId,
-    ticketId,
-    eventType,
-    entityType,
-    entityId,
-    metadata,
-    requestId: "mail-queue",
-  });
 }
 
 function preview(value: string) {

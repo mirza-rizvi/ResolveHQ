@@ -16,8 +16,13 @@ const DashboardPage = lazy(() => import("./pages/dashboard").then((module) => ({
 const CustomersPage = lazy(() => import("./pages/customers").then((module) => ({ default: module.CustomersPage })));
 const TeamPage = lazy(() => import("./pages/team").then((module) => ({ default: module.TeamPage })));
 const SettingsPage = lazy(() => import("./pages/settings").then((module) => ({ default: module.SettingsPage })));
-const PlaceholderPage = lazy(() =>
-  import("./pages/placeholder").then((module) => ({ default: module.PlaceholderPage })),
+const KnowledgeBasePage = lazy(() =>
+  import("./pages/knowledge-base").then((module) => ({ default: module.KnowledgeBasePage })),
+);
+const HelpCenterPage = lazy(() => import("./pages/help-center").then((module) => ({ default: module.HelpCenterPage })));
+const ReportsPage = lazy(() => import("./pages/reports").then((module) => ({ default: module.ReportsPage })));
+const AutomationsPage = lazy(() =>
+  import("./pages/automations").then((module) => ({ default: module.AutomationsPage })),
 );
 const ForgotPasswordPage = lazy(() =>
   import("./pages/forgot-password").then((module) => ({ default: module.ForgotPasswordPage })),
@@ -41,6 +46,7 @@ const router = createBrowserRouter([
   { path: "/forgot-password", element: deferred(<ForgotPasswordPage />), errorElement: <RouteError /> },
   { path: "/reset-password", element: deferred(<ResetPasswordPage />), errorElement: <RouteError /> },
   { path: "/accept-invite", element: deferred(<AcceptInvitePage />), errorElement: <RouteError /> },
+  { path: "/help/:workspace/:articleSlug?", element: deferred(<HelpCenterPage />), errorElement: <RouteError /> },
   {
     element: <RequireAuth />,
     errorElement: <RouteError />,
@@ -53,33 +59,9 @@ const router = createBrowserRouter([
           { path: "/inbox/:ticketId?", element: <InboxPage /> },
           { path: "/tickets", element: <Navigate to="/inbox" replace /> },
           { path: "/customers", element: deferred(<CustomersPage />) },
-          {
-            path: "/knowledge-base",
-            element: deferred(
-              <PlaceholderPage
-                title="Knowledge Base"
-                description="Turn repeat answers into dependable customer documentation."
-              />,
-            ),
-          },
-          {
-            path: "/reports",
-            element: deferred(
-              <PlaceholderPage
-                title="Reports"
-                description="Operational reporting will grow from real ticket and activity data."
-              />,
-            ),
-          },
-          {
-            path: "/automations",
-            element: deferred(
-              <PlaceholderPage
-                title="Automations"
-                description="Rules will arrive after the core support workflow is proven."
-              />,
-            ),
-          },
+          { path: "/knowledge-base", element: deferred(<KnowledgeBasePage />) },
+          { path: "/reports", element: deferred(<ReportsPage />) },
+          { path: "/automations", element: deferred(<AutomationsPage />) },
           { path: "/team", element: deferred(<TeamPage />) },
           { path: "/settings", element: deferred(<SettingsPage />) },
         ],

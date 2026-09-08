@@ -58,11 +58,56 @@ export default {
     await dispatchMail(env, "inbound-mail", [eventId]);
   },
   async queue(batch, env) {
+    // Dead-letter consumers drain exhausted and terminal work. Each message's
+    // durable row is marked queue_exhausted so it stops looking in-flight,
+    // the arrival is recorded once, and the message is acknowledged.
+    if (batch.queue.endsWith("-dlq")) {
+      for (const message of batch.messages) {
+        const body = message.body as MailQueueMessage;
+        try {
+          if (body.kind === "outbound-mail") {
+            await env.DB.batch([
+              env.DB.prepare(
+                "UPDATE outbound_mail_jobs SET status = 'failed', terminal_reason = 'queue_exhausted', lease_until = 0, dispatch_until = 0, updated_at = ? WHERE id = ? AND status <> 'sent' AND terminal_reason IS NULL",
+              ).bind(Date.now(), body.jobId),
+              env.DB.prepare(
+                "UPDATE messages SET delivery_status = 'failed' WHERE delivery_status = 'queued' AND id = (SELECT message_id FROM outbound_mail_jobs WHERE id = ?)",
+              ).bind(body.jobId),
+            ]);
+          } else if (body.kind === "inbound-mail") {
+            await env.DB.prepare(
+              "UPDATE inbound_mail_events SET status = 'failed', terminal_reason = 'queue_exhausted', lease_until = 0, dispatch_until = 0, updated_at = ? WHERE id = ? AND status <> 'completed' AND terminal_reason IS NULL",
+            )
+              .bind(Date.now(), body.eventId)
+              .run();
+          } else if (body.kind === "maintenance") {
+            await env.DB.prepare(
+              "UPDATE maintenance_tasks SET status = 'failed', lease_until = 0, dispatch_until = 0 WHERE id = ? AND status = 'pending'",
+            )
+              .bind(body.taskId)
+              .run();
+          }
+          const reference =
+            body.kind === "inbound-mail" ? body.eventId : body.kind === "outbound-mail" ? body.jobId : body.taskId;
+          await env.DB.prepare(
+            "INSERT OR IGNORE INTO mail_dlq_events (id, kind, reference, created_at) VALUES (?, ?, ?, ?)",
+          )
+            .bind(`${batch.queue}/${reference}`, body.kind, reference, Date.now())
+            .run();
+        } catch {
+          console.error({ event: "dlq_record_failed", queue: batch.queue });
+        }
+        console.error({ event: "mail_dead_letter", queue: batch.queue, kind: body.kind });
+        message.ack();
+      }
+      return;
+    }
     for (const message of batch.messages) {
       try {
         if (message.body.kind === "inbound-mail") await processInboundMail(env, message.body);
         else if (message.body.kind === "outbound-mail") await processOutboundMail(env, { jobId: message.body.jobId });
-        else if (message.body.kind === "maintenance") await processMaintenance(env, message.body.taskId);
+        else if (message.body.kind === "maintenance")
+          await processMaintenance(env, message.body.taskId, message.body.generation);
         else {
           console.error({ event: "invalid_queue_message" });
           message.ack();
@@ -77,7 +122,12 @@ export default {
         });
         if (error instanceof MailFailure && error.terminal) {
           const dlq = message.body.kind === "inbound-mail" ? env.INBOUND_MAIL_DLQ : env.OUTBOUND_MAIL_DLQ;
-          if (dlq) await dlq.send(message.body);
+          if (dlq)
+            await dlq.send(
+              message.body.kind === "outbound-mail"
+                ? { ...message.body, generation: message.body.generation }
+                : message.body,
+            );
           message.ack();
         } else message.retry({ delaySeconds: error instanceof MailFailure ? error.delaySeconds : 60 });
       }

@@ -1,7 +1,7 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { requireAuth } from "resolve-server/auth/middleware";
+import { requireAuth, requireRole } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
 import { tags } from "resolve-server/db/schema";
 import { HttpError } from "resolve-server/http/errors";
@@ -44,4 +44,12 @@ tagRoutes.post("/", validate("json", tagInput), async (context) => {
     throw error;
   }
   return context.json({ tag: { id, ...input } }, 201);
+});
+tagRoutes.delete("/:id", requireRole("admin"), async (context) => {
+  const tenant = context.get("tenant");
+  const result = await createDb(context.env.DB)
+    .delete(tags)
+    .where(and(eq(tags.id, context.req.param("id")), eq(tags.organizationId, tenant.organizationId)));
+  if (!result.meta.changes) throw new HttpError(404, "tag_not_found", "Tag not found.");
+  return context.json({ ok: true });
 });

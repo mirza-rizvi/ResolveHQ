@@ -99,6 +99,21 @@
         "max_retries": 5,
         "dead_letter_queue": "resolvehq-maintenance-dlq",
       },
+      {
+        "queue": "resolvehq-inbound-mail-dlq",
+        "max_batch_size": 10,
+        "max_retries": 0,
+      },
+      {
+        "queue": "resolvehq-outbound-mail-dlq",
+        "max_batch_size": 10,
+        "max_retries": 0,
+      },
+      {
+        "queue": "resolvehq-maintenance-dlq",
+        "max_batch_size": 10,
+        "max_retries": 0,
+      },
     ],
   },
   "ratelimits": [

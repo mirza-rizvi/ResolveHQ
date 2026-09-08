@@ -10,7 +10,7 @@
   min-width: 0;
   flex-direction: column;
   padding: 18px 12px 12px;
-  background: #fafbfc;
+  background: var(--surface-subtle);
   border-right: 1px solid var(--rule);
 }
 .queue-mobile-title {
@@ -142,7 +142,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  background: #fff;
+  background: var(--surface);
   border-right: 1px solid var(--rule);
 }
 .rundown-header {
@@ -183,7 +183,7 @@
   height: 36px;
   padding: 0 10px;
   color: var(--quiet);
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 5px;
 }
@@ -210,7 +210,7 @@
   height: 34px;
   padding: 0 7px;
   color: var(--muted);
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 5px;
 }
@@ -234,7 +234,7 @@
 .bulk-toolbar select {
   height: 34px;
   padding: 0 28px 0 9px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 5px;
   font-size: 12px;
@@ -410,7 +410,7 @@
   min-width: 0;
   flex-direction: column;
   height: calc(100vh - 56px);
-  background: #fff;
+  background: var(--surface);
 }
 .conversation-empty {
   display: grid;
@@ -478,7 +478,7 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 10px 14px;
-  background: #fafbfc;
+  background: var(--surface-subtle);
   border-bottom: 1px solid var(--rule);
 }
 .conversation-context label,
@@ -496,7 +496,7 @@
   max-width: 130px;
   padding: 0 25px 0 8px;
   color: #3f4752;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 4px;
   font-size: 11px;
@@ -671,7 +671,7 @@
 }
 .composer {
   margin: 0 12px 12px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 6px;
   box-shadow: 0 8px 22px rgba(24, 32, 46, 0.08);
@@ -721,7 +721,7 @@
   margin-left: auto;
   padding: 0 25px 0 8px;
   color: var(--muted);
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: 4px;
   font-size: 11px;
@@ -905,7 +905,7 @@
 .dialog-card {
   width: min(510px, 100%);
   padding: 20px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 8px;
   box-shadow: 0 24px 70px rgba(15, 20, 30, 0.2);
@@ -952,7 +952,7 @@
   width: 100%;
   padding: 9px 10px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 5px;
   font-size: 13px;
@@ -990,7 +990,7 @@
   width: min(390px, 100%);
   height: 100%;
   padding: 20px;
-  background: #fff;
+  background: var(--surface);
   border-left: 1px solid var(--rule);
   box-shadow: -18px 0 45px rgba(15, 20, 30, 0.12);
   overflow-y: auto;

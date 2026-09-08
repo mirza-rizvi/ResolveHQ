@@ -31,6 +31,11 @@ Cron ───────────> outbox reconciliation, expired sessions/
 - `src/server/tickets`: tickets, messages, notes, assignment, tags, and activity.
 - `src/server/attachments`: validated uploads and authorized downloads.
 - `src/server/search`: tenant-scoped ticket and message search.
+- `src/server/knowledge-base`: internal articles plus the public help center; drafts never leave the tenant.
+- `src/server/reports`: tenant-scoped window metrics and formula-safe CSV export.
+- `src/server/automations`: ordered rule matching with per-event deduplication.
+- `src/server/privacy`: customer export, durable erasure, and ticket deletion with mail-cancellation guards.
+- `src/server/assistant`: optional AI summarize, draft, and classification behind the provider seam.
 - `src/server/providers`: storage, incoming/outgoing mail, and optional AI contracts.
 - `src/web`: React application and route surfaces.
 
@@ -50,13 +55,19 @@ The scheduled handler runs every five minutes. Each sweep touches at most 20 can
 
 `AIProvider` exposes optional summarize, draft, classify, sentiment, similar-ticket, and tag suggestions. The default provider reports that AI is unavailable; core workflows never depend on it.
 
+The `OpenAIProvider` implementation activates when `OPENAI_API_KEY` is configured on the Worker. Conversation content is passed as untrusted data, every response is validated, and failures surface as `502`/`503` errors the UI reports without touching the agent's draft.
+
+### Erasure
+
+Customer erasure reuses the durable maintenance task queue: each invocation deletes five tickets (cancelling in-flight outbound jobs and terminalizing matching inbound events first), removes attachment bytes from R2, and finishes by deleting the customer profile and any captured dev mail. A lost invocation resumes from the task row; an interrupted one never leaves mail jobs alive behind deleted content.
+
 ## Multi-tenancy
 
 Organizations are the tenant boundary. Users may belong to more than one organization through memberships. All tenant-owned tables include `organization_id`, even where it is derivable through another relationship; this makes tenant filters explicit, indexable, and auditable. Composite indexes lead with `organization_id` for primary query paths.
 
 ## Async behavior
 
-Queue payloads contain only opaque event/job IDs and R2 object keys, never raw mail, session credentials, or provider secrets. Inbound retries are idempotent through event checkpoints, unique provider message IDs, deterministic attachment keys, and an attachment cursor. Outbound jobs live in a D1 outbox, stop once sent, back off after failure, and are re-enqueued by Cron. Six actual failures stop automatic processing and retain D1 state; terminal jobs and exhausted Queue retries flow to dedicated dead-letter queues. Administrators review stopped mail in Settings. Outbound automatic retries keep a frozen envelope and key within a 23-hour window, and complaints cannot be resent.
+Queue payloads contain only opaque event/job IDs and R2 object keys, never raw mail, session credentials, or provider secrets. Inbound retries are idempotent through event checkpoints, unique provider message IDs, deterministic attachment keys, and an attachment cursor. Outbound jobs live in a D1 outbox, stop once sent, back off after failure, and are re-enqueued by Cron. Six actual failures stop automatic processing and retain D1 state; terminal jobs and exhausted Queue retries flow to dedicated dead-letter queues, whose consumers drain the queues by marking the durable rows `queue_exhausted` and recording each arrival. Administrators review stopped mail in Settings. Outbound automatic retries keep a frozen envelope and attachment manifest within a 23-hour window — attachment bytes resolve from storage and re-verify on every attempt — and complaints cannot be resent.
 
 ## Search
 

@@ -36,6 +36,13 @@
       "when": 1788687728902,
       "tag": "0004_message_cursors",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788774000000,
+      "tag": "0005_full_product",
+      "breakpoints": true
     }
   ]
 }

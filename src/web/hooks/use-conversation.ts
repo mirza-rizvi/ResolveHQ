@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/web/components/toast";
 import type { Conversation, MessageKind } from "@/web/inbox/types";
@@ -17,9 +18,10 @@ export function useConversation(ticketId?: string) {
   const toast = useToast();
   const query = useInfiniteQuery({
     queryKey: ["conversation", ticketId],
-    queryFn: ({ pageParam }) =>
+    queryFn: ({ pageParam, signal }) =>
       api<Conversation>(
         `/tickets/${ticketId}?messageWindow=latest${pageParam ? `&messageCursor=${encodeURIComponent(pageParam)}` : ""}`,
+        { signal },
       ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextMessageCursor ?? undefined,
@@ -77,30 +79,36 @@ export function useConversation(ticketId?: string) {
   });
 
   const pages = query.data?.pages;
-  const conversation = pages?.length
-    ? {
-        ...pages[0],
-        messages: [
-          ...new Map(
-            [...pages]
-              .reverse()
-              .flatMap((page) => page.messages)
-              .map((message) => [message.id, message]),
-          ).values(),
-        ],
-        attachments: [
-          ...new Map(
-            pages.flatMap((page) => page.attachments).map((attachment) => [attachment.id, attachment]),
-          ).values(),
-        ],
-      }
-    : null;
+  const conversation = useMemo(
+    () =>
+      pages?.length
+        ? {
+            ...pages[0],
+            messages: [
+              ...new Map(
+                [...pages]
+                  .reverse()
+                  .flatMap((page) => page.messages)
+                  .map((message) => [message.id, message]),
+              ).values(),
+            ],
+            attachments: [
+              ...new Map(
+                pages.flatMap((page) => page.attachments).map((attachment) => [attachment.id, attachment]),
+              ).values(),
+            ],
+          }
+        : null,
+    [pages],
+  );
   return {
     conversation,
     hasOlder: query.hasNextPage,
     loadingOlder: query.isFetchingNextPage,
-    loadOlder: () => void query.fetchNextPage(),
-    error: query.error,
+    canLoadOlder: !query.isFetching,
+    loadOlder: () => void query.fetchNextPage({ cancelRefetch: false }),
+    olderError: query.isFetchNextPageError ? query.error : null,
+    error: query.isFetchNextPageError ? null : query.error,
     isPending: Boolean(ticketId) && query.isPending,
     refetch: query.refetch,
     update: (changes: Record<string, unknown>) => update.mutate(changes),

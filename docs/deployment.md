@@ -10,11 +10,13 @@ The deployment flow reads `wrangler.jsonc` and provisions everything ResolveHQ n
 
 - D1 database `resolvehq`
 - R2 bucket `resolvehq-attachments`
-- Queues `resolvehq-inbound-mail`, `resolvehq-outbound-mail`, and `resolvehq-maintenance`, plus their dead-letter queues
+- Queues `resolvehq-inbound-mail`, `resolvehq-outbound-mail`, and `resolvehq-maintenance`, plus their dead-letter queues and their drain consumers
 - Rate limit namespaces `1001` (auth, 10 requests/minute) and `1002` (writes, 120 requests/minute)
 - A cron trigger that runs every 5 minutes
 
-The flow reads the active entries in `.dev.vars.example`: supply a unique `SESSION_PEPPER` (at least 32 random characters) and keep `DEV_MAIL_MODE=disabled`. Configure optional `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `SYSTEM_MAIL_FROM`, and `APP_URL` afterward in Worker secrets/settings; commented example entries are not configuration. Local development uses the separate capture-mode example. D1 migrations are applied as part of `npm run deploy` (`wrangler d1 migrations apply DB --remote`, then `wrangler deploy`), which the deploy flow runs on your behalf.
+The flow reads the active entries in `.dev.vars.example`: supply a unique `SESSION_PEPPER` (at least 32 random characters) and keep `DEV_MAIL_MODE=disabled`. Configure optional `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `SYSTEM_MAIL_FROM`, and `APP_URL` afterward in Worker secrets/settings; commented example entries are not configuration. D1 migrations are applied as part of `npm run deploy` (`wrangler d1 migrations apply DB --remote`, then `wrangler deploy`), which the deploy flow runs on your behalf.
+
+For opt-in AI assistance in the composer, add `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets. Without a key the AI controls stay hidden and the Worker makes no AI requests.
 
 Workers Free is supported subject to CPU and service quotas; a successful deployment alone does not prove that authentication or MIME parsing fits the Free CPU allowance. Queues are available on Free. Activate R2 in the Cloudflare dashboard and complete its subscription checkout separately; this does not require Workers Paid. See the [audit, limits, and recovery guide](cloudflare-free.md).
 

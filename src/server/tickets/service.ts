@@ -99,26 +99,22 @@ export async function applyTicketUpdate(
     );
 
   if (changes.assignedUserId !== undefined && changes.assignedUserId !== current.assignedUserId) {
-    await db
-      .insert(ticketAssignments)
-      .values({
-        id: newId("asn"),
-        organizationId: tenant.organizationId,
-        ticketId: current.id,
-        assignedToUserId: changes.assignedUserId,
-        assignedByUserId: tenant.userId,
-      });
+    await db.insert(ticketAssignments).values({
+      id: newId("asn"),
+      organizationId: tenant.organizationId,
+      ticketId: current.id,
+      assignedToUserId: changes.assignedUserId,
+      assignedByUserId: tenant.userId,
+    });
     if (changes.assignedUserId && changes.assignedUserId !== tenant.userId) {
-      await db
-        .insert(notifications)
-        .values({
-          id: newId("ntf"),
-          organizationId: tenant.organizationId,
-          userId: changes.assignedUserId,
-          ticketId: current.id,
-          type: "ticket.assigned",
-          title: `Ticket #${current.number} was assigned to you`,
-        });
+      await db.insert(notifications).values({
+        id: newId("ntf"),
+        organizationId: tenant.organizationId,
+        userId: changes.assignedUserId,
+        ticketId: current.id,
+        type: "ticket.assigned",
+        title: `Ticket #${current.number} was assigned to you`,
+      });
     }
     await recordActivity(db, tenant, {
       ticketId: current.id,

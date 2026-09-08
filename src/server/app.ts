@@ -13,6 +13,11 @@ import { searchRoutes } from "./search/routes";
 import { attachmentRoutes } from "./attachments/routes";
 import { operationRoutes } from "./operations/routes";
 import { webhookRoutes } from "./webhooks/routes";
+import { knowledgeBaseRoutes, helpCenterRoutes } from "./knowledge-base/routes";
+import { reportRoutes } from "./reports/routes";
+import { automationRoutes } from "./automations/routes";
+import { privacyRoutes } from "./privacy/routes";
+import { assistantRoutes } from "./assistant/routes";
 
 const app = new Hono<HonoEnv>();
 
@@ -60,6 +65,12 @@ app.route("/api/attachments", attachmentRoutes);
 app.route("/api/operations", operationRoutes);
 app.route("/api/webhooks", webhookRoutes);
 app.route("/api/mail-recovery", mailRecoveryRoutes);
+app.route("/api/knowledge-base", knowledgeBaseRoutes);
+app.route("/api/help-center", helpCenterRoutes);
+app.route("/api/reports", reportRoutes);
+app.route("/api/automations", automationRoutes);
+app.route("/api/privacy", privacyRoutes);
+app.route("/api/assistant", assistantRoutes);
 
 const v1 = new Hono<HonoEnv>();
 v1.route("/auth", authRoutes);
@@ -73,6 +84,12 @@ v1.route("/attachments", attachmentRoutes);
 v1.route("/operations", operationRoutes);
 v1.route("/webhooks", webhookRoutes);
 v1.route("/mail-recovery", mailRecoveryRoutes);
+v1.route("/knowledge-base", knowledgeBaseRoutes);
+v1.route("/help-center", helpCenterRoutes);
+v1.route("/reports", reportRoutes);
+v1.route("/automations", automationRoutes);
+v1.route("/privacy", privacyRoutes);
+v1.route("/assistant", assistantRoutes);
 app.route("/api/v1", v1);
 
 app.notFound((context) => {
@@ -110,7 +127,11 @@ app.onError((error, context) => {
       400,
     );
   }
-  console.error({ event: "request_failed", requestId: context.get("requestId") });
+  console.error({
+    event: "request_failed",
+    requestId: context.get("requestId"),
+    message: error instanceof Error ? error.message : String(error),
+  });
   return context.json(
     { error: { code: "internal_error", message: "Something went wrong.", requestId: context.get("requestId") } },
     500,

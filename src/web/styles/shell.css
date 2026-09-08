@@ -136,7 +136,7 @@
 .command-dialog {
   width: min(590px, calc(100% - 28px));
   overflow: hidden;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 8px;
   box-shadow: 0 24px 70px rgba(15, 20, 30, 0.22);
@@ -257,7 +257,7 @@
 }
 .workspace-menu select option {
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
 }
 .account-menu {
   position: relative;
@@ -283,7 +283,7 @@
   display: grid;
   min-width: 176px;
   padding: 5px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: 6px;
   box-shadow: 0 16px 40px rgba(15, 20, 30, 0.2);

@@ -1,7 +1,9 @@
 import { lazy, Suspense, useRef, useState, type FormEvent } from "react";
-import { Loader2, Paperclip, Send, StickyNote, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2, Paperclip, Send, Sparkles, StickyNote, X } from "lucide-react";
 import { useToast } from "@/web/components/toast";
 import type { RichComposerHandle } from "@/web/components/rich-composer";
+import { api as apiClient } from "@/web/lib/api";
 import { Button } from "@/web/components/ui";
 import type { DraftStatus } from "@/web/hooks/use-draft";
 import { api, errorMessage } from "@/web/lib/api";
@@ -53,7 +55,13 @@ export function Composer({
   const editorRef = useRef<RichComposerHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const aiQuery = useQuery({
+    queryKey: ["organization-settings"],
+    queryFn: () => apiClient<{ ai: { enabled: boolean } }>("/organization/settings"),
+    staleTime: 5 * 60_000,
+  });
   const uploading = attachments.some((file) => !file.id);
+  const aiEnabled = aiQuery.data?.ai.enabled === true;
 
   async function upload(file: File) {
     if (file.size > maxAttachmentSize) {
@@ -106,6 +114,25 @@ export function Composer({
     if (editorRef.current) editorRef.current.insertText(reply.content);
     else onBodyChange(body ? `${body}\n\n${reply.content}` : reply.content, "");
   }
+  const [aiBusy, setAiBusy] = useState<"draft" | "summarize" | null>(null);
+  const [summary, setSummary] = useState("");
+  async function requestAssistant(action: "draft" | "summarize") {
+    setAiBusy(action);
+    try {
+      const result = await api<{ draft?: string; summary?: string }>(`/assistant/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ ticketId }),
+      });
+      if (action === "draft" && result.draft) {
+        if (editorRef.current) editorRef.current.insertText(result.draft);
+        else onBodyChange(result.draft, "");
+      } else if (result.summary) setSummary(result.summary);
+    } catch (reason) {
+      toast.push(errorMessage(reason, "AI assistance is unavailable."), "error");
+    } finally {
+      setAiBusy(null);
+    }
+  }
 
   return (
     <form
@@ -144,7 +171,32 @@ export function Composer({
             </option>
           ))}
         </select>
+        <span className="composer-ai">
+          {aiEnabled && kind === "message" && (
+            <button type="button" disabled={aiBusy !== null} onClick={() => void requestAssistant("draft")}>
+              <Sparkles size={13} />
+              {aiBusy === "draft" ? "Drafting…" : "AI draft"}
+            </button>
+          )}
+          {aiEnabled && (
+            <button type="button" disabled={aiBusy !== null} onClick={() => void requestAssistant("summarize")}>
+              {aiBusy === "summarize" ? "Summarizing…" : "Summarize"}
+            </button>
+          )}
+        </span>
       </div>
+      {summary && (
+        <aside className="ai-summary" aria-label="Conversation summary">
+          <header>
+            <Sparkles size={13} />
+            Summary
+            <button type="button" aria-label="Dismiss summary" onClick={() => setSummary("")}>
+              <X size={12} />
+            </button>
+          </header>
+          <p>{summary}</p>
+        </aside>
+      )}
       <Suspense fallback={<div className="rich-composer-loading" aria-label="Loading editor" />}>
         <RichComposer
           ref={editorRef}

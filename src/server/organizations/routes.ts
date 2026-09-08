@@ -76,6 +76,7 @@ organizationRoutes.get("/settings", async (context) => {
       resendConfigured: Boolean(context.env.RESEND_API_KEY),
       webhookConfigured: Boolean(context.env.RESEND_WEBHOOK_SECRET),
     },
+    ai: { enabled: Boolean(context.env.OPENAI_API_KEY) },
   });
 });
 
