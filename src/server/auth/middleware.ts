@@ -11,9 +11,24 @@ const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function assertMutationOrigin(context: Context<HonoEnv>): void {
   if (safeMethods.has(context.req.method)) return;
-  const expectedOrigin = new URL(resolveAppUrl(context.env, context.req.raw)).origin;
   const origin = context.req.header("origin");
-  if (!origin || origin !== expectedOrigin)
+  if (!origin) throw new HttpError(403, "invalid_origin", "The request origin is not allowed.");
+  // A same-site proxy (Vite dev, a tunnel) forwards the browser's origin while
+  // the Worker itself may be addressed differently; APP_URL does not always
+  // reach local dev runtimes. When the Origin host matches the forwarded Host
+  // header, the browser is talking to this site directly, which is the thing
+  // cross-site request forgery tries to fake. A forged Host without a
+  // victim browser is outside the CSRF threat model.
+  let originHost: string | null = null;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    originHost = null;
+  }
+  const host = context.req.header("host");
+  const matchesProxyHost = Boolean(originHost && host && originHost === host);
+  const expectedOrigin = new URL(resolveAppUrl(context.env, context.req.raw)).origin;
+  if (origin !== expectedOrigin && !matchesProxyHost)
     throw new HttpError(403, "invalid_origin", "The request origin is not allowed.");
   const cookieToken = getCookie(context, CSRF_COOKIE) ?? "";
   const headerToken = context.req.header("x-csrf-token") ?? "";

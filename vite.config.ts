@@ -8,7 +8,9 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
   server: {
     port: 5173,
-    proxy: { "/api": "http://localhost:8787" },
+    // changeOrigin stays off so the Worker sees the browser's Host header and
+    // can verify same-site origins in local development.
+    proxy: { "/api": { target: "http://localhost:8787", changeOrigin: false } },
   },
   build: { outDir: "dist", sourcemap: true },
 });
