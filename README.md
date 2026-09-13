@@ -69,6 +69,7 @@ The Vite application runs on `http://localhost:5173` and proxies `/api` to Wrang
 
 - **AI assistance**: set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets to make AI available. Each workspace still opts in through Settings; without a key the feature stays hidden and no AI calls are made.
 - **Retention**: set `TICKET_RETENTION_DAYS` as a Worker variable to automatically delete resolved and closed tickets (with attachments) after that many days. Unset means nothing is deleted automatically.
+- **Turnstile**: set `TURNSTILE_SITE_KEY` as a Worker variable and `TURNSTILE_SECRET_KEY` as a Worker secret to add a Cloudflare Turnstile challenge to sign-in, sign-up, and forgot-password. Leave both unset and the forms behave exactly as before, with no script loaded and no challenge shown.
 
 ## Not yet implemented
 

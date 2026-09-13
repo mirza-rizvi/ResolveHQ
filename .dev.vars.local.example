@@ -16,3 +16,9 @@ DEV_MAIL_MODE=capture
 
 # Optional. Sender for system mail; defaults to no-reply@<your app host>.
 # SYSTEM_MAIL_FROM=no-reply@example.com
+
+# Optional. Adds a Cloudflare Turnstile challenge to sign-in, sign-up, and forgot-password.
+# Both must be set for the widget to appear and be enforced; leave both commented out to
+# keep the feature off entirely.
+# TURNSTILE_SITE_KEY=0x...
+# TURNSTILE_SECRET_KEY=0x...

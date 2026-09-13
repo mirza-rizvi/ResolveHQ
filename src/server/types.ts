@@ -23,6 +23,10 @@ export interface AppBindings {
   OPENAI_MODEL?: string;
   /** Optional retention window in days; resolved and closed tickets older than this are deleted by the cron sweep. */
   TICKET_RETENTION_DAYS?: string;
+  /** Optional public Cloudflare Turnstile site key, exposed via GET /api/auth/config. */
+  TURNSTILE_SITE_KEY?: string;
+  /** Optional Cloudflare Turnstile secret key. When set, auth forms require a verified token. */
+  TURNSTILE_SECRET_KEY?: string;
 }
 
 export type MailQueueMessage =

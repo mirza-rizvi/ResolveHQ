@@ -30,6 +30,16 @@ Workers Free is supported subject to CPU and service quotas; a successful deploy
 - `SYSTEM_MAIL_FROM` sets the sender used for password reset and invitation email. For production, use an address on a Resend-verified domain; the default workers.dev sender usually cannot send through Resend.
 - `TICKET_RETENTION_DAYS` is optional. Set a whole number of days (1–3650) and the 5-minute cron permanently deletes resolved and closed tickets whose last activity is older, including their attachments and in-flight mail. Unset keeps everything until you erase it manually.
 
+## Optional: Cloudflare Turnstile
+
+Add a Turnstile challenge to sign-in, sign-up, and forgot-password with no code changes:
+
+1. In the Cloudflare dashboard, create a Turnstile widget of type **Managed** for your domain.
+2. Set `TURNSTILE_SITE_KEY` as a Worker variable (in `wrangler.jsonc` or the dashboard) — it is public and safe to expose to the browser.
+3. Set `TURNSTILE_SECRET_KEY` as a Worker secret: `npx wrangler secret put TURNSTILE_SECRET_KEY`.
+
+`TURNSTILE_SITE_KEY` controls whether the widget renders (the auth pages fetch it from `GET /api/auth/config`); `TURNSTILE_SECRET_KEY` controls whether the server verifies a token. Set both together. Leave both unset and the auth pages behave exactly as before: no Turnstile script is loaded and no verification happens server-side. Once both are set, the widget appears on the three auth forms and the server rejects a submission with an invalid or missing token before it does any password hashing.
+
 ## First-run setup
 
 1. Open your deployed ResolveHQ URL and sign up: name, email, workspace, and an optional support email. The support email becomes your default inbox.

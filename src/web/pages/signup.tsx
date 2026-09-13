@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { useAuth } from "@/web/auth";
 import { Button, Input } from "@/web/components/ui";
 import { api, errorMessage } from "@/web/lib/api";
+import { Turnstile, type TurnstileHandle } from "@/web/components/turnstile";
 import { AuthSurface } from "./login";
 
 export function SignupPage() {
@@ -11,6 +12,7 @@ export function SignupPage() {
   const navigate = useNavigate();
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const turnstileRef = useRef<TurnstileHandle>(null);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -25,6 +27,7 @@ export function SignupPage() {
       navigate("/inbox");
     } catch (reason) {
       setError(errorMessage(reason, "Workspace creation failed."));
+      turnstileRef.current?.reset();
     } finally {
       setSubmitting(false);
     }
@@ -62,6 +65,7 @@ export function SignupPage() {
           <Input name="supportEmail" type="email" placeholder="support@example.com" />
           <small>The address customers write to. You can add it later in Settings.</small>
         </label>
+        <Turnstile ref={turnstileRef} />
         {error && (
           <p className="form-error" role="alert">
             {error}

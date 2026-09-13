@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { useAuth, type Session } from "@/web/auth";
 import { api, errorMessage } from "@/web/lib/api";
 import { safeNext } from "@/web/lib/next";
 import { Button, Input } from "@/web/components/ui";
+import { Turnstile, type TurnstileHandle } from "@/web/components/turnstile";
 
 export function LoginPage() {
   const { session, refresh } = useAuth();
@@ -12,6 +13,7 @@ export function LoginPage() {
   const [params] = useSearchParams();
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const turnstileRef = useRef<TurnstileHandle>(null);
   const destination = safeNext(params.get("next"));
   if (session) return <Navigate to={destination} replace />;
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -22,12 +24,17 @@ export function LoginPage() {
     try {
       await api<Session>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
+        body: JSON.stringify({
+          email: form.get("email"),
+          password: form.get("password"),
+          turnstileToken: form.get("turnstileToken") || undefined,
+        }),
       });
       await refresh();
       navigate(destination);
     } catch (reason) {
       setError(errorMessage(reason, "Sign in failed."));
+      turnstileRef.current?.reset();
     } finally {
       setSubmitting(false);
     }
@@ -47,6 +54,7 @@ export function LoginPage() {
           Password
           <Input name="password" type="password" autoComplete="current-password" minLength={12} required />
         </label>
+        <Turnstile ref={turnstileRef} />
         {error && (
           <p className="form-error" role="alert">
             {error}

@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, MailCheck } from "lucide-react";
 import { Button, Input } from "@/web/components/ui";
 import { api, errorMessage } from "@/web/lib/api";
+import { Turnstile, type TurnstileHandle } from "@/web/components/turnstile";
 import { AuthSurface } from "./login";
 
 const CONFIRMATION = "If that email exists, a reset link is on its way.";
@@ -11,16 +12,20 @@ export function ForgotPasswordPage() {
   const [error, setError] = useState("");
   const [sent, setSent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const turnstileRef = useRef<TurnstileHandle>(null);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setSubmitting(true);
-    const email = String(new FormData(event.currentTarget).get("email"));
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email"));
+    const turnstileToken = form.get("turnstileToken") || undefined;
     try {
-      await api("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) });
+      await api("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email, turnstileToken }) });
       setSent(true);
     } catch (reason) {
       setError(errorMessage(reason, "The reset email could not be requested."));
+      turnstileRef.current?.reset();
     } finally {
       setSubmitting(false);
     }
@@ -42,6 +47,7 @@ export function ForgotPasswordPage() {
             Email
             <Input name="email" type="email" autoComplete="email" required />
           </label>
+          <Turnstile ref={turnstileRef} />
           {error && (
             <p className="form-error" role="alert">
               {error}
