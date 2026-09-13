@@ -205,10 +205,12 @@ This seed is for local evaluation only, and the seed password only works when `S
 npm run dev              # Single Vite dev server on :5173 (SPA + Worker, one origin)
 npm run preview          # Serve the build output in the Workers runtime on :4173
 npm run build            # Type-check and build the SPA
+npm run typecheck        # Type-check only (tsc -b)
 npm run test             # Business-critical tests (Workers pool)
 npm run test:web         # React component tests (jsdom)
-npm run test:e2e         # Resets the local D1 database, then runs Playwright
-npm run lint              # TypeScript and ESLint checks
+npm run test:e2e         # Resets the local D1 database, then runs Playwright (chromium project)
+npm run screenshots      # Resets the local D1 database, then regenerates docs/images PNGs
+npm run lint              # ESLint checks
 npm run format            # Format src/, tests/, and e2e/ with Prettier
 npm run db:generate       # Generate a migration from Drizzle schema changes
 npm run db:migrate:local  # Apply migrations to local D1
@@ -238,9 +240,10 @@ Add these under **Settings → Secrets and variables → Actions**:
   - Email Routing: Edit — only if you use native Cloudflare email sending (see above); not needed for Resend
   - Workers AI: Read is not required for deployment
 - `CLOUDFLARE_ACCOUNT_ID` (required to enable the workflow) — your Cloudflare account ID.
-- `SESSION_PEPPER` (optional) — set this only if you want the workflow to also push the pepper
-  as a Worker secret via `wrangler secret put`. Most setups set `SESSION_PEPPER` once, by hand,
-  during first-run setup, and never need the workflow to touch it again.
+
+Worker secrets, including `SESSION_PEPPER`, are set once, out of band — with
+`npx wrangler secret put SESSION_PEPPER` locally or from the Cloudflare dashboard — and the
+workflow never touches them.
 
 The workflow runs `npm run cloudflare:check`, builds, applies pending D1 migrations
 (`wrangler d1 migrations apply DB --remote`), then runs `wrangler deploy`. It does not create D1,

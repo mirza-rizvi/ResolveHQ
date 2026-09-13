@@ -50,15 +50,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      # Optional: only runs when the repo secret is set. wrangler-action's
-      # own `secrets:` input fails outright when the mapped env var is
-      # empty, so this is a separate, guarded step instead.
-      - name: Set SESSION_PEPPER secret
-        if: env.SESSION_PEPPER != ''
-        env:
-          SESSION_PEPPER: ${{ secrets.SESSION_PEPPER }}
-        run: npx wrangler secret put SESSION_PEPPER <<< "$SESSION_PEPPER"
-
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:

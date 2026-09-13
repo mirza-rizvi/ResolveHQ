@@ -13,7 +13,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\" \"e2e/**/*.ts\"",
     "test": "vitest run",
     "test:web": "vitest run --config vitest.web.config.ts",
-    "test:e2e": "npm run db:reset:local && playwright test",
+    "test:e2e": "npm run db:reset:local && playwright test --project=chromium",
     "screenshots": "npm run db:reset:local && playwright test --project=screenshots",
     "test:watch": "vitest",
     "cf-typegen": "wrangler types",

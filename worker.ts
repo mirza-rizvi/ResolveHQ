@@ -39,7 +39,8 @@ export default {
       )
       .run();
     try {
-      await env.ATTACHMENTS.put(stagingObjectKey, message.raw, {
+      const body = message.raw.pipeThrough(new FixedLengthStream(message.rawSize));
+      await env.ATTACHMENTS.put(stagingObjectKey, body, {
         httpMetadata: { contentType: "message/rfc822" },
         customMetadata: { eventId, from: message.from.slice(0, 250), to: message.to.slice(0, 250) },
       });
