@@ -4,6 +4,20 @@ ResolveHQ is a Cloudflare-native, self-hostable helpdesk for small support teams
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mirza-rizvi/ResolveHQ)
 
+## Screenshots
+
+The three-pane inbox, showing a ticket thread with an internal note and a queued reply:
+
+![Inbox with a ticket open, showing the queue list and conversation thread](docs/images/inbox.png)
+
+| | |
+|---|---|
+| ![Dashboard with open, unassigned, and urgent ticket counts, plus recent tickets and activity](docs/images/dashboard.png) Overview dashboard | ![Reports page showing ticket volume, response times, and breakdowns by status and priority](docs/images/reports.png) Reports |
+| ![Knowledge base article list with draft and published articles](docs/images/knowledge-base.png) Knowledge base | ![Public help center page listing published articles by category](docs/images/help-center.png) Public help center |
+| ![Automations page with two rules and their conditions and actions](docs/images/automations.png) Automations | ![Inbox in dark mode with the same ticket thread open](docs/images/inbox-dark.png) Dark mode |
+
+More screenshots, including the mobile view and the customer and settings pages, are in [`docs/images/`](docs/images/).
+
 ## What you can do
 
 - Run a shared inbox with tenant-isolated customers, tickets, assignment, status, priority, tags, and full-text search.

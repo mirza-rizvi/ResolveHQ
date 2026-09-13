@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:web": "vitest run --config vitest.web.config.ts",
     "test:e2e": "npm run db:reset:local && playwright test",
+    "screenshots": "npm run db:reset:local && playwright test --project=screenshots",
     "test:watch": "vitest",
     "cf-typegen": "wrangler types",
     "db:generate": "drizzle-kit generate",
