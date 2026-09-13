@@ -5,7 +5,6 @@ interface TurnstileRenderOptions {
   sitekey: string;
   callback: (token: string) => void;
   "expired-callback"?: () => void;
-  "error-callback"?: () => void;
 }
 
 declare global {
@@ -24,7 +23,7 @@ let scriptPromise: Promise<void> | null = null;
 function loadTurnstileScript(): Promise<void> {
   if (window.turnstile) return Promise.resolve();
   if (!scriptPromise) {
-    scriptPromise = new Promise((resolve, reject) => {
+    scriptPromise = new Promise<void>((resolve, reject) => {
       const script = document.createElement("script");
       script.src = SCRIPT_URL;
       script.async = true;
@@ -32,12 +31,19 @@ function loadTurnstileScript(): Promise<void> {
       script.onload = () => resolve();
       script.onerror = () => reject(new Error("Failed to load Turnstile."));
       document.head.appendChild(script);
+    }).catch((error: unknown) => {
+      // Don't memoize a failed load forever: a blocked/offline attempt should be retryable
+      // the next time a page mounts this component.
+      scriptPromise = null;
+      throw error;
     });
   }
   return scriptPromise;
 }
 
-// Cached across the SPA session so every auth page shares one /auth/config request.
+// Cached across the SPA session so every auth page shares one /auth/config request. Only a
+// successful response is cached; a transient network error must not permanently hide the
+// widget on an otherwise-configured deployment.
 let cachedSiteKey: string | null | undefined;
 let siteKeyPromise: Promise<string | null> | null = null;
 function fetchSiteKey(): Promise<string | null> {
@@ -45,7 +51,10 @@ function fetchSiteKey(): Promise<string | null> {
   if (!siteKeyPromise) {
     siteKeyPromise = api<{ turnstileSiteKey: string | null }>("/auth/config")
       .then((config) => (cachedSiteKey = config.turnstileSiteKey))
-      .catch(() => (cachedSiteKey = null));
+      .catch((error: unknown) => {
+        siteKeyPromise = null;
+        throw error;
+      });
   }
   return siteKeyPromise;
 }
@@ -54,48 +63,63 @@ export interface TurnstileHandle {
   reset: () => void;
 }
 
+type State =
+  | { status: "loading" }
+  | { status: "ready"; siteKey: string | null }
+  | { status: "error" };
+
 /**
  * Optional Cloudflare Turnstile widget for auth forms. Renders a hidden input named
  * "turnstileToken" so it is picked up automatically by FormData. Completely inert (no
- * script load, no widget, no hidden input) when the server has no public site key configured.
+ * script load, no widget, no hidden input) when the server has no public site key configured
+ * (which itself requires both TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY to be set).
  */
 export const Turnstile = forwardRef<TurnstileHandle>(function Turnstile(_props, ref) {
-  const [siteKey, setSiteKey] = useState<string | null>(null);
+  const [state, setState] = useState<State>({ status: "loading" });
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const widgetId = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void fetchSiteKey().then((key) => {
-      if (!cancelled) setSiteKey(key);
-    });
+    fetchSiteKey()
+      .then((siteKey) => {
+        if (!cancelled) setState({ status: "ready", siteKey });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: "error" });
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
   useEffect(() => {
-    if (!siteKey) return;
+    if (state.status !== "ready" || !state.siteKey) return;
+    const siteKey = state.siteKey;
     let cancelled = false;
-    void loadTurnstileScript().then(() => {
-      if (cancelled || !window.turnstile || !containerRef.current) return;
-      widgetId.current = window.turnstile.render(containerRef.current, {
-        sitekey: siteKey,
-        callback: (token) => {
-          if (inputRef.current) inputRef.current.value = token;
-        },
-        "expired-callback": () => {
-          if (inputRef.current) inputRef.current.value = "";
-        },
+    loadTurnstileScript()
+      .then(() => {
+        if (cancelled || !window.turnstile || !containerRef.current) return;
+        widgetId.current = window.turnstile.render(containerRef.current, {
+          sitekey: siteKey,
+          callback: (token) => {
+            if (inputRef.current) inputRef.current.value = token;
+          },
+          "expired-callback": () => {
+            if (inputRef.current) inputRef.current.value = "";
+          },
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: "error" });
       });
-    });
     return () => {
       cancelled = true;
       if (widgetId.current && window.turnstile) window.turnstile.remove(widgetId.current);
       widgetId.current = null;
     };
-  }, [siteKey]);
+  }, [state]);
 
   useImperativeHandle(ref, () => ({
     reset: () => {
@@ -104,7 +128,13 @@ export const Turnstile = forwardRef<TurnstileHandle>(function Turnstile(_props, 
     },
   }));
 
-  if (!siteKey) return null;
+  if (state.status === "error")
+    return (
+      <p className="form-error" role="alert">
+        Verification failed to load. Reload the page.
+      </p>
+    );
+  if (state.status === "loading" || !state.siteKey) return null;
 
   return (
     <div className="turnstile-widget">

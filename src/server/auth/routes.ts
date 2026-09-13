@@ -22,7 +22,7 @@ import type { HonoEnv } from "resolve-server/types";
 import { hashPassword, verifyPassword } from "./password";
 import { clearSessionCookies, createSession, resolveTenant, SESSION_COOKIE } from "./session";
 import { assertMutationOrigin, requireAuth } from "./middleware";
-import { verifyTurnstile } from "./turnstile";
+import { turnstileEnabled, verifyTurnstile } from "./turnstile";
 
 const turnstileToken = z.string().max(2000).optional();
 
@@ -90,9 +90,10 @@ authRoutes.use("*", async (context, next) => {
   }
 });
 
-authRoutes.get("/config", (context) =>
-  context.json({ turnstileSiteKey: context.env.TURNSTILE_SITE_KEY ?? null }),
-);
+authRoutes.get("/config", (context) => {
+  const siteKey = context.env.TURNSTILE_SITE_KEY;
+  return context.json({ turnstileSiteKey: turnstileEnabled(context.env) && siteKey ? siteKey : null });
+});
 
 authRoutes.post("/signup", validate("json", signupInput), async (context) => {
   const ip = context.req.header("cf-connecting-ip") ?? "local";
@@ -100,7 +101,7 @@ authRoutes.post("/signup", validate("json", signupInput), async (context) => {
   if (!rate.success) throw new HttpError(429, "rate_limited", "Too many signup attempts. Try again shortly.");
 
   const input = context.req.valid("json");
-  if (!(await verifyTurnstile(context.env, input.turnstileToken, ip)))
+  if (!(await verifyTurnstile(context.env, input.turnstileToken, context.req.header("cf-connecting-ip"))))
     throw new HttpError(400, "turnstile_failed", "Verification failed. Please try again.");
 
   const db = createDb(context.env.DB);
@@ -178,7 +179,7 @@ authRoutes.post("/login", validate("json", credentials), async (context) => {
   const byIp = await context.env.AUTH_RATE_LIMIT.limit({ key: `login:ip:${ip}` });
   if (!rate.success || !byIp.success)
     throw new HttpError(429, "rate_limited", "Too many sign-in attempts. Try again shortly.");
-  if (!(await verifyTurnstile(context.env, input.turnstileToken, ip)))
+  if (!(await verifyTurnstile(context.env, input.turnstileToken, context.req.header("cf-connecting-ip"))))
     throw new HttpError(400, "turnstile_failed", "Verification failed. Please try again.");
 
   const db = createDb(context.env.DB);
@@ -346,7 +347,7 @@ authRoutes.post(
     ]);
     if (!byIp.success || !byEmail.success)
       throw new HttpError(429, "rate_limited", "Too many requests. Try again shortly.");
-    if (!(await verifyTurnstile(context.env, token, ip)))
+    if (!(await verifyTurnstile(context.env, token, context.req.header("cf-connecting-ip"))))
       throw new HttpError(400, "turnstile_failed", "Verification failed. Please try again.");
     const db = createDb(context.env.DB);
     const [user] = await db

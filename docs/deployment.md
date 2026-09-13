@@ -38,7 +38,7 @@ Add a Turnstile challenge to sign-in, sign-up, and forgot-password with no code 
 2. Set `TURNSTILE_SITE_KEY` as a Worker variable (in `wrangler.jsonc` or the dashboard) — it is public and safe to expose to the browser.
 3. Set `TURNSTILE_SECRET_KEY` as a Worker secret: `npx wrangler secret put TURNSTILE_SECRET_KEY`.
 
-`TURNSTILE_SITE_KEY` controls whether the widget renders (the auth pages fetch it from `GET /api/auth/config`); `TURNSTILE_SECRET_KEY` controls whether the server verifies a token. Set both together. Leave both unset and the auth pages behave exactly as before: no Turnstile script is loaded and no verification happens server-side. Once both are set, the widget appears on the three auth forms and the server rejects a submission with an invalid or missing token before it does any password hashing.
+Both must be set together: the server only exposes the site key from `GET /api/auth/config` and only verifies a token once `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are both configured, so a half-configured deploy (only one of the two) leaves the feature fully off rather than showing a widget nobody checks or rejecting sign-ins with no widget to satisfy them. Once both are set, the widget appears on the three auth forms and the server rejects a submission with an invalid or missing token before it does any password hashing.
 
 ## First-run setup
 

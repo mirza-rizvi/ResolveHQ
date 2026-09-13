@@ -3,20 +3,33 @@ import type { AppBindings } from "resolve-server/types";
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const VERIFY_TIMEOUT_MS = 5000;
 
+type TurnstileEnv = Pick<AppBindings, "TURNSTILE_SITE_KEY" | "TURNSTILE_SECRET_KEY">;
+
 /**
- * Verifies a Cloudflare Turnstile token. Inert when TURNSTILE_SECRET_KEY is unset: returns
- * true immediately without making a network call, so the feature has no effect until an
- * operator configures it.
+ * Turnstile is only "on" when both the public site key and the secret key are configured.
+ * A half-configured deploy (secret only) would 400 every auth request with no widget on
+ * screen to satisfy it; (site key only) would show a challenge the server never checks. Both
+ * server-side verification and whatever exposes the site key to the SPA must gate on this.
+ */
+export function turnstileEnabled(env: TurnstileEnv): boolean {
+  return Boolean(env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY);
+}
+
+/**
+ * Verifies a Cloudflare Turnstile token. Inert unless both TURNSTILE_SITE_KEY and
+ * TURNSTILE_SECRET_KEY are set: returns true immediately without making a network call, so
+ * the feature has no effect until an operator configures both.
  */
 export async function verifyTurnstile(
-  env: Pick<AppBindings, "TURNSTILE_SECRET_KEY">,
+  env: TurnstileEnv,
   token: string | undefined,
   remoteIp?: string,
 ): Promise<boolean> {
-  if (!env.TURNSTILE_SECRET_KEY) return true;
+  const secret = env.TURNSTILE_SECRET_KEY;
+  if (!turnstileEnabled(env) || !secret) return true;
   if (!token) return false;
 
-  const body = new URLSearchParams({ secret: env.TURNSTILE_SECRET_KEY, response: token });
+  const body = new URLSearchParams({ secret, response: token });
   if (remoteIp) body.set("remoteip", remoteIp);
 
   const controller = new AbortController();

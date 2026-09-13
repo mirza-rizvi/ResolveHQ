@@ -21,6 +21,11 @@ import { assistantRoutes } from "./assistant/routes";
 
 const app = new Hono<HonoEnv>();
 
+// Keep this policy in sync with public/_headers: that file governs asset-server responses
+// (the SPA HTML/JS/CSS under the current single-page-application routing), this middleware
+// governs anything the Worker itself responds to (API routes, app.notFound fallbacks, etc.),
+// and hono/secure-headers overwrites any CSP the asset server would otherwise have set. A
+// directive added to one must be added to the other or it only half-applies.
 app.use(
   "*",
   secureHeaders({
@@ -28,8 +33,9 @@ app.use(
       defaultSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "blob:"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://challenges.cloudflare.com"],
       connectSrc: ["'self'"],
+      frameSrc: ["https://challenges.cloudflare.com"],
       frameAncestors: ["'none'"],
     },
     referrerPolicy: "strict-origin-when-cross-origin",

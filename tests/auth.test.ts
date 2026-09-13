@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import app from "resolve-server/app";
 import { hashPassword, verifyPassword } from "resolve-server/auth/password";
+import { turnstileEnabled, verifyTurnstile } from "resolve-server/auth/turnstile";
 import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { login, request, signup } from "./helpers";
 
@@ -304,11 +305,69 @@ describe("Turnstile", () => {
     expect(await response.json()).toEqual({ turnstileSiteKey: null });
   });
 
-  it("exposes the public site key from /auth/config when Turnstile is configured", async () => {
-    const configuredEnv = { ...env, TURNSTILE_SITE_KEY: "site-key-123" };
+  it("exposes the public site key from /auth/config only once both keys are configured", async () => {
+    const configuredEnv = { ...env, TURNSTILE_SITE_KEY: "site-key-123", TURNSTILE_SECRET_KEY: "test-secret" };
     const response = await app.request("http://localhost:8787/api/auth/config", {}, configuredEnv);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ turnstileSiteKey: "site-key-123" });
+  });
+
+  it("hides the site key and skips verification when only the secret key is set", async () => {
+    const configuredEnv = { ...env, TURNSTILE_SECRET_KEY: "test-secret" };
+    const verify = vi.spyOn(globalThis, "fetch");
+    try {
+      const configResponse = await app.request("http://localhost:8787/api/auth/config", {}, configuredEnv);
+      expect(await configResponse.json()).toEqual({ turnstileSiteKey: null });
+
+      const response = await app.request(
+        "http://localhost:8787/api/auth/signup",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: "Owner Secret Only",
+            email: "owner-turnstile-secret-only@example.test",
+            password: "a-secure-test-password",
+            organizationName: "Workspace Secret Only",
+            organizationSlug: "workspace-turnstile-secret-only",
+          }),
+        },
+        configuredEnv,
+      );
+      expect(response.status).toBe(201);
+      expect(verify).not.toHaveBeenCalled();
+    } finally {
+      verify.mockRestore();
+    }
+  });
+
+  it("hides the site key and skips verification when only the site key is set", async () => {
+    const configuredEnv = { ...env, TURNSTILE_SITE_KEY: "site-key-only-123" };
+    const verify = vi.spyOn(globalThis, "fetch");
+    try {
+      const configResponse = await app.request("http://localhost:8787/api/auth/config", {}, configuredEnv);
+      expect(await configResponse.json()).toEqual({ turnstileSiteKey: null });
+
+      const response = await app.request(
+        "http://localhost:8787/api/auth/signup",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: "Owner Site Key Only",
+            email: "owner-turnstile-sitekey-only@example.test",
+            password: "a-secure-test-password",
+            organizationName: "Workspace Site Key Only",
+            organizationSlug: "workspace-turnstile-sitekey-only",
+          }),
+        },
+        configuredEnv,
+      );
+      expect(response.status).toBe(201);
+      expect(verify).not.toHaveBeenCalled();
+    } finally {
+      verify.mockRestore();
+    }
   });
 
   it("skips verification when Turnstile is not configured", async () => {
@@ -323,7 +382,7 @@ describe("Turnstile", () => {
   });
 
   it("rejects signup without token when Turnstile is configured", async () => {
-    const configuredEnv = { ...env, TURNSTILE_SECRET_KEY: "test-secret" };
+    const configuredEnv = { ...env, TURNSTILE_SITE_KEY: "site-key-x", TURNSTILE_SECRET_KEY: "test-secret" };
     const verify = vi.spyOn(globalThis, "fetch");
     try {
       const response = await app.request(
@@ -356,7 +415,7 @@ describe("Turnstile", () => {
   });
 
   it("accepts signup once Turnstile verification succeeds", async () => {
-    const configuredEnv = { ...env, TURNSTILE_SECRET_KEY: "test-secret" };
+    const configuredEnv = { ...env, TURNSTILE_SITE_KEY: "site-key-x", TURNSTILE_SECRET_KEY: "test-secret" };
     const verify = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ success: true }));
     try {
       const response = await app.request(
@@ -384,8 +443,9 @@ describe("Turnstile", () => {
   });
 
   it("rejects login when Turnstile verification fails and does not create a session", async () => {
-    const workspace = await signup("turnstile-login");
-    const configuredEnv = { ...env, TURNSTILE_SECRET_KEY: "test-secret" };
+    // Verification runs before the user lookup, so it rejects even a nonexistent account
+    // without ever touching the database — this exercises the login path in isolation.
+    const configuredEnv = { ...env, TURNSTILE_SITE_KEY: "site-key-x", TURNSTILE_SECRET_KEY: "test-secret" };
     const verify = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ success: false }));
     try {
       const response = await app.request(
@@ -404,14 +464,13 @@ describe("Turnstile", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: { code: "turnstile_failed" } });
       expect(response.headers.get("set-cookie")).toBeNull();
-      void workspace;
     } finally {
       verify.mockRestore();
     }
   });
 
   it("rejects forgot-password without a token when Turnstile is configured", async () => {
-    const configuredEnv = { ...env, TURNSTILE_SECRET_KEY: "test-secret" };
+    const configuredEnv = { ...env, TURNSTILE_SITE_KEY: "site-key-x", TURNSTILE_SECRET_KEY: "test-secret" };
     const verify = vi.spyOn(globalThis, "fetch");
     try {
       const response = await app.request(
@@ -426,6 +485,49 @@ describe("Turnstile", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: { code: "turnstile_failed" } });
       expect(verify).not.toHaveBeenCalled();
+    } finally {
+      verify.mockRestore();
+    }
+  });
+
+  it("is enabled only when both keys are set", () => {
+    expect(turnstileEnabled({ TURNSTILE_SITE_KEY: undefined, TURNSTILE_SECRET_KEY: undefined })).toBe(false);
+    expect(turnstileEnabled({ TURNSTILE_SITE_KEY: "site", TURNSTILE_SECRET_KEY: undefined })).toBe(false);
+    expect(turnstileEnabled({ TURNSTILE_SITE_KEY: undefined, TURNSTILE_SECRET_KEY: "secret" })).toBe(false);
+    expect(turnstileEnabled({ TURNSTILE_SITE_KEY: "site", TURNSTILE_SECRET_KEY: "secret" })).toBe(true);
+  });
+
+  it("posts the token, secret, and remote IP to siteverify", async () => {
+    const verify = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ success: true }));
+    try {
+      const ok = await verifyTurnstile(
+        { TURNSTILE_SITE_KEY: "site", TURNSTILE_SECRET_KEY: "shh-secret" },
+        "a-token",
+        "203.0.113.4",
+      );
+      expect(ok).toBe(true);
+      expect(verify).toHaveBeenCalledTimes(1);
+      const [url, init] = verify.mock.calls[0];
+      expect(url).toBe("https://challenges.cloudflare.com/turnstile/v0/siteverify");
+      expect(init?.method).toBe("POST");
+      const body = init?.body as URLSearchParams;
+      expect(body.get("secret")).toBe("shh-secret");
+      expect(body.get("response")).toBe("a-token");
+      expect(body.get("remoteip")).toBe("203.0.113.4");
+    } finally {
+      verify.mockRestore();
+    }
+  });
+
+  it("fails closed on a network error", async () => {
+    const verify = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    try {
+      const ok = await verifyTurnstile(
+        { TURNSTILE_SITE_KEY: "site", TURNSTILE_SECRET_KEY: "shh-secret" },
+        "a-token",
+        "203.0.113.4",
+      );
+      expect(ok).toBe(false);
     } finally {
       verify.mockRestore();
     }

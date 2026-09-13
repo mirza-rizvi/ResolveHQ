@@ -1,3 +1,7 @@
+# Keep this Content-Security-Policy in sync with the hono/secure-headers policy in
+# src/server/app.ts: this file governs asset-server responses, that middleware governs
+# anything the Worker itself responds to, and it overwrites whatever this file would have
+# set on those responses. A directive added to one must be added to the other.
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'
   Referrer-Policy: strict-origin-when-cross-origin
