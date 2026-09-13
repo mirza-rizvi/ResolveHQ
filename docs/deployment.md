@@ -152,6 +152,31 @@ Apply the additive migrations before deploying this Worker. Password and session
 
 Previously attempted failed/stalled outbound jobs are conservatively stopped for administrator review because their provider idempotency age is unknown. Review **Settings → Stopped mail** after upgrading. Do not leave old and new Worker versions processing mail concurrently for an extended rollout: older versions do not honor the new retry leases and terminal states. Preserve any existing paid-plan configuration; no Free-specific CPU cap is added.
 
+### Case-only duplicate addresses (migrations 0006 and 0007)
+
+Inbox addresses and customer emails were stored case-sensitively before this release, so a database
+can hold `Support@acme.test` and `support@acme.test` as two rows. Both migrations resolve this
+deterministically, but inspect the duplicates first — the outcome is not reversible by re-running the
+migration.
+
+```sql
+-- Inboxes that will be affected by 0006
+SELECT lower(email_address), count(*) FROM inboxes WHERE disabled_at IS NULL GROUP BY 1 HAVING count(*) > 1;
+-- Customers that will be affected by 0007
+SELECT organization_id, lower(email), count(*) FROM customers GROUP BY 1, 2 HAVING count(*) > 1;
+```
+
+**Inboxes (0006).** The oldest live inbox per lower-cased address keeps the address; every other live
+duplicate is disabled (`disabled_at` set) before the unique index is created, so the migration cannot
+abort. Mail for that address then routes to the surviving inbox. If the wrong one survived, re-enable
+the inbox you want in **Settings → Support inboxes** after disabling the other.
+
+**Customers (0007).** The oldest customer per `(organization_id, lower(email))` receives the backfilled
+primary identity. The newer duplicate keeps its tickets and stays visible in the Customers list, but
+it holds no identity, so new mail from that address attaches to the older record. Fold the pair with
+**Customers → Merge into…** (admin only) after upgrading; the merge moves tickets, messages, tags and
+identities and deletes the duplicate profile. Nothing is merged automatically.
+
 For local development, copy `.dev.vars.local.example` to `.dev.vars`. The production example deliberately uses `DEV_MAIL_MODE=disabled` and omits the localhost origin so one-click deployment cannot accidentally capture production mail.
 
 ## Demo workspace
