@@ -1,9 +1,11 @@
 # Required. At least 32 random characters; used to pepper password and token hashes.
 SESSION_PEPPER=replace-with-at-least-32-random-characters
 
-# Local development only. Vite serves the app on 5173 and proxies /api to the Worker on 8787,
-# so the Worker must be told the browser's origin. In production APP_URL is optional: the
-# Worker uses the request origin for CSRF checks, cookie security, and links in emails.
+# Optional. The dev server serves the SPA and /api from a single origin (http://localhost:5173),
+# so the Worker can derive its own origin from the request; APP_URL only overrides it. The same
+# is true in production: the Worker uses the request origin for CSRF checks, cookie security,
+# and links in emails. Set it to pin the origin used in mail sent from cron or queue handlers,
+# which have no incoming request.
 APP_URL=http://localhost:5173
 
 # "capture" records every outgoing email in the mail_captures table (viewable in Settings)

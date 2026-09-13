@@ -21,18 +21,10 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 },
     },
   ],
-  webServer: [
-    {
-      command: "npx wrangler dev --port 8787",
-      url: "http://localhost:8787/api/health",
-      reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
-    },
-    {
-      command: "npx vite --port 5173",
-      url: "http://localhost:5173",
-      reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
-    },
-  ],
+  webServer: {
+    command: "npx vite --port 5173",
+    url: "http://localhost:5173/api/health",
+    reuseExistingServer: !process.env.CI,
+    timeout: 90_000,
+  },
 });

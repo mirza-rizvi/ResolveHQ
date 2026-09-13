@@ -71,7 +71,29 @@ npm run db:seed:local
 npm run dev
 ```
 
-The Vite application runs on `http://localhost:5173` and proxies `/api` to Wrangler on `http://localhost:8787`.
+`npm run dev` starts a single Vite dev server on `http://localhost:5173`. The
+`@cloudflare/vite-plugin` runs `worker.ts` inside the Workers runtime behind it, so the SPA and
+`/api` share one origin and there is no proxy and no second port. The React app hot-reloads;
+editing Worker code reloads the Worker.
+
+`npm run preview` builds nothing on its own — run `npm run build` first — and then serves the
+built output in the Workers runtime on `http://localhost:4173`, which is the closest local match
+to production.
+
+Handlers that have no HTTP route of their own are triggered through the runtime's handler URLs:
+
+```bash
+# Run the cron handler once (the schedule itself does not fire locally)
+curl "http://localhost:5173/cdn-cgi/handler/scheduled?cron=*/5+*+*+*+*"
+
+# Deliver a raw RFC822 message to the email handler
+curl -X POST --data-binary @message.eml \
+  "http://localhost:5173/cdn-cgi/handler/email?from=sender@example.com&to=support@northstarlabs.test"
+```
+
+Queue producers and consumers run locally as well; messages are delivered by the local queue
+simulator. Workers AI has no local simulator, so with the `ai` binding uncommented the dev server
+needs `wrangler login` or `CLOUDFLARE_API_TOKEN`.
 
 ## Documentation
 
@@ -81,7 +103,7 @@ The Vite application runs on `http://localhost:5173` and proxies `/api` to Wrang
 
 ## Optional configuration
 
-- **AI assistance**: summaries, reply drafts, classification, and translation. Two providers: Cloudflare Workers AI (runs in your own account, no key; uncomment the `ai` block in `wrangler.jsonc` to enable it, then optionally set `WORKERS_AI_MODEL`, default `@cf/meta/llama-4-scout-17b-16e-instruct`, or `AI_GATEWAY_ID` to route calls through an AI Gateway; translation uses `@cf/meta/m2m100-1.2b`) or OpenAI (`OPENAI_API_KEY`, optionally `OPENAI_MODEL`, default `gpt-4o-mini`). The binding wins when both are present. Either way each workspace opts in through Settings, and with neither configured the feature stays hidden and no AI calls are made. With the `ai` binding present, `wrangler dev` needs `wrangler login` or `CLOUDFLARE_API_TOKEN` because Workers AI has no local simulator.
+- **AI assistance**: summaries, reply drafts, classification, and translation. Two providers: Cloudflare Workers AI (runs in your own account, no key; uncomment the `ai` block in `wrangler.jsonc` to enable it, then optionally set `WORKERS_AI_MODEL`, default `@cf/meta/llama-4-scout-17b-16e-instruct`, or `AI_GATEWAY_ID` to route calls through an AI Gateway; translation uses `@cf/meta/m2m100-1.2b`) or OpenAI (`OPENAI_API_KEY`, optionally `OPENAI_MODEL`, default `gpt-4o-mini`). The binding wins when both are present. Either way each workspace opts in through Settings, and with neither configured the feature stays hidden and no AI calls are made. With the `ai` binding present, the local dev server needs `wrangler login` or `CLOUDFLARE_API_TOKEN` because Workers AI has no local simulator.
 - **Native outbound email**: on Workers Paid, uncomment the `send_email` binding in `wrangler.jsonc` to send through Cloudflare Email Sending instead of Resend, and subscribe a queue to its delivery events. Cloudflare assigns the Message-ID and offers no idempotency key, so a send that is never confirmed stops for administrator review rather than being retried. Leave it commented out and Resend remains the provider. See the [deployment guide](docs/deployment.md).
 - **Retention**: set `TICKET_RETENTION_DAYS` as a Worker variable to automatically delete resolved and closed tickets (with attachments) after that many days. Unset means nothing is deleted automatically.
 - **Turnstile**: set `TURNSTILE_SITE_KEY` as a Worker variable and `TURNSTILE_SECRET_KEY` as a Worker secret to add a Cloudflare Turnstile challenge to sign-in, sign-up, and forgot-password. Leave both unset and the forms behave exactly as before, with no script loaded and no challenge shown.

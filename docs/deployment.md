@@ -16,7 +16,7 @@ The deployment flow reads `wrangler.jsonc` and provisions everything ResolveHQ n
 
 The flow reads the active entries in `.dev.vars.example`: supply a unique `SESSION_PEPPER` (at least 32 random characters) and keep `DEV_MAIL_MODE=disabled`. Configure optional `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `SYSTEM_MAIL_FROM`, and `APP_URL` afterward in Worker secrets/settings; commented example entries are not configuration. D1 migrations are applied as part of `npm run deploy` (`wrangler d1 migrations apply DB --remote`, then `wrangler deploy`), which the deploy flow runs on your behalf.
 
-AI assistance supports two providers. Cloudflare Workers AI is preferred when its binding exists: uncomment the `ai` block in `wrangler.jsonc` and redeploy; no credential is required, `WORKERS_AI_MODEL` overrides the text model (default `@cf/meta/llama-4-scout-17b-16e-instruct`) and `AI_GATEWAY_ID` routes the calls through an AI Gateway. Otherwise add `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets. The binding wins whenever both are present. The block ships commented out because, once it is present, `wrangler dev` opens a remote proxy for Workers AI and refuses to start without `wrangler login` or `CLOUDFLARE_API_TOKEN`.
+AI assistance supports two providers. Cloudflare Workers AI is preferred when its binding exists: uncomment the `ai` block in `wrangler.jsonc` and redeploy; no credential is required, `WORKERS_AI_MODEL` overrides the text model (default `@cf/meta/llama-4-scout-17b-16e-instruct`) and `AI_GATEWAY_ID` routes the calls through an AI Gateway. Otherwise add `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets. The binding wins whenever both are present. The block ships commented out because, once it is present, the local dev server opens a remote proxy for Workers AI and refuses to start without `wrangler login` or `CLOUDFLARE_API_TOKEN`.
 
 A configured provider only makes the feature available: each workspace opts in through Settings → AI assistance, which names the provider the conversations are sent to. With no provider the AI controls stay hidden and the Worker makes no AI requests. Translation (composer drafts and single messages) follows the same opt-in.
 
@@ -133,6 +133,14 @@ npm run deploy
 
 Before running these commands, activate R2 and verify your sender domain in Resend. Secret creation may prompt to create the named Worker on a new account; accept that prompt. Wrangler 4.127.1 or newer resolves the pre-created D1 database by its configured name and provisions the R2 bucket and Queues during deploy. The one-click flow provisions D1 before its deploy command; the manual flow must create it explicitly because migrations run before `wrangler deploy`. Existing installations should reuse their configured D1 binding, never create a replacement database.
 
+`npm run build` runs Vite with `@cloudflare/vite-plugin`, which writes the client bundle to
+`dist/client`, the bundled Worker to `dist/resolvehq/index.js`, and a generated
+`dist/resolvehq/wrangler.json` that merges `wrangler.jsonc` with the built asset directory. It also
+writes `.wrangler/deploy/config.json`, so a plain `wrangler deploy` from the repository root picks
+up the generated config automatically — the `assets.directory` field is therefore absent from
+`wrangler.jsonc` on purpose. Deploy only after a build; `wrangler deploy` on its own does not
+rebuild.
+
 After deployment, complete First-run setup above. Keep R2 public access and r2.dev access disabled. No production account changes are made by `cloudflare:check`; it only validates local configuration.
 
 ## Updating
@@ -194,7 +202,8 @@ This seed is for local evaluation only, and the seed password only works when `S
 ## Commands
 
 ```bash
-npm run dev              # Vite and Wrangler together
+npm run dev              # Single Vite dev server on :5173 (SPA + Worker, one origin)
+npm run preview          # Serve the build output in the Workers runtime on :4173
 npm run build            # Type-check and build the SPA
 npm run test             # Business-critical tests (Workers pool)
 npm run test:web         # React component tests (jsdom)

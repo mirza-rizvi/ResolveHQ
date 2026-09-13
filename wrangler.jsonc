@@ -2,33 +2,10 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "resolvehq",
   "main": "worker.ts",
-  "alias": {
-    "resolve-server/activity/service": "./src/server/activity/service.ts",
-    "resolve-server/app": "./src/server/app.ts",
-    "resolve-server/auth/middleware": "./src/server/auth/middleware.ts",
-    "resolve-server/auth/password": "./src/server/auth/password.ts",
-    "resolve-server/db": "./src/server/db/index.ts",
-    "resolve-server/db/schema": "./src/server/db/schema.ts",
-    "resolve-server/http/errors": "./src/server/http/errors.ts",
-    "resolve-server/http/validate": "./src/server/http/validate.ts",
-    "resolve-server/lib/app-url": "./src/server/lib/app-url.ts",
-    "resolve-server/lib/crypto": "./src/server/lib/crypto.ts",
-    "resolve-server/lib/id": "./src/server/lib/id.ts",
-    "resolve-server/lib/sanitize-html": "./src/server/lib/sanitize-html.ts",
-    "resolve-server/mail/queue": "./src/server/mail/queue.ts",
-    "resolve-server/organizations/settings": "./src/server/organizations/settings.ts",
-    "resolve-server/mail/system": "./src/server/mail/system.ts",
-    "resolve-server/providers/storage": "./src/server/providers/storage.ts",
-    "resolve-server/search/index": "./src/server/search/index.ts",
-    "resolve-server/tickets/service": "./src/server/tickets/service.ts",
-    "resolve-server/types": "./src/server/types.ts",
-    "resolve-shared/domain": "./src/shared/domain.ts",
-  },
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "binding": "ASSETS",
-    "directory": "./dist",
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"],
   },
@@ -50,7 +27,7 @@
   ],
   // Optional Workers AI (free daily allowance; per-workspace opt-in still gates data flow).
   // Uncomment to prefer Workers AI over OPENAI_API_KEY. Note: with this binding present,
-  // `wrangler dev` opens a remote proxy for AI and needs `wrangler login` or CLOUDFLARE_API_TOKEN.
+  // the local dev server opens a remote proxy for AI and needs `wrangler login` or CLOUDFLARE_API_TOKEN.
   // "ai": {
   //   "binding": "AI",
   // },
