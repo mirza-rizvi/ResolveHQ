@@ -211,6 +211,37 @@ npm run auth:benchmark    # Synthetic local elapsed-time benchmark; not producti
 npm run deploy           # Check, build, apply remote D1 migrations, deploy
 ```
 
+## Continuous deployment (optional)
+
+`.github/workflows/deploy.yml` can deploy on every push to `dev` (or on demand via
+"Run workflow"), using [`cloudflare/wrangler-action`](https://github.com/cloudflare/wrangler-action).
+It is inert until you add repository secrets: with none set, the workflow's deploy job is
+skipped outright, so cloning or forking the repository does not require touching this file.
+
+Add these under **Settings → Secrets and variables → Actions**:
+
+- `CLOUDFLARE_API_TOKEN` (required to enable the workflow) — a Cloudflare API token scoped to:
+  - Workers Scripts: Edit
+  - D1: Edit
+  - Queues: Edit
+  - R2 Storage: Edit
+  - Account Settings: Read
+  - Email Routing: Edit — only if you use native Cloudflare email sending (see above); not needed for Resend
+  - Workers AI: Read is not required for deployment
+- `CLOUDFLARE_ACCOUNT_ID` (required to enable the workflow) — your Cloudflare account ID.
+- `SESSION_PEPPER` (optional) — set this only if you want the workflow to also push the pepper
+  as a Worker secret via `wrangler secret put`. Most setups set `SESSION_PEPPER` once, by hand,
+  during first-run setup, and never need the workflow to touch it again.
+
+The workflow runs `npm run cloudflare:check`, builds, applies pending D1 migrations
+(`wrangler d1 migrations apply DB --remote`), then runs `wrangler deploy`. It does not create D1,
+R2, or Queues resources — those must already exist (the one-click flow or manual setup above
+provisions them).
+
+The [Deploy to Cloudflare button](#one-click-deployment) remains the recommended path for a first
+deployment. This workflow is for redeploying an already-provisioned installation on every push,
+not for initial setup.
+
 ## Public repository safety
 
 - Keep `.dev.vars`, `.env`, Cloudflare credentials, API keys, webhook secrets, and production database identifiers out of version control. Only the example files belong in the repository.

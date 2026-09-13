@@ -1,0 +1,69 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      has_token: ${{ steps.check.outputs.has_token }}
+    steps:
+      # GitHub does not allow the secrets context directly in a job-level
+      # `if`. Route it through a step env var and a job output instead.
+      - name: Check for Cloudflare API token
+        id: check
+        env:
+          CF_API_TOKEN_SET: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        run: echo "has_token=$CF_API_TOKEN_SET" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: check
+    if: needs.check.outputs.has_token == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Cloudflare configuration
+        run: npm run cloudflare:check
+
+      - name: Build
+        run: npm run build
+
+      # Optional: only runs when the repo secret is set. wrangler-action's
+      # own `secrets:` input fails outright when the mapped env var is
+      # empty, so this is a separate, guarded step instead.
+      - name: Set SESSION_PEPPER secret
+        if: env.SESSION_PEPPER != ''
+        env:
+          SESSION_PEPPER: ${{ secrets.SESSION_PEPPER }}
+        run: npx wrangler secret put SESSION_PEPPER <<< "$SESSION_PEPPER"
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.129.1"
+          preCommands: npx wrangler d1 migrations apply DB --remote
+          command: deploy
