@@ -99,6 +99,58 @@ describe("cloudflare email delivery events", () => {
     ).toMatchObject({ status: "failed", reason: "email.bounced" });
   });
 
+  it("stops only the owning tenant's job when two tenants hold the same provider id", async () => {
+    const providerMessageId = "<cf-shared@mail.example>";
+    const { messageIds } = await tenants("cf-shared", providerMessageId);
+    // A provider id is only unique within one tenant. Both jobs carry it here;
+    // the oldest owns it, and the other tenant's job must not be touched.
+    await env.DB.prepare("UPDATE outbound_mail_jobs SET provider_message_id = ? WHERE message_id = ?")
+      .bind(providerMessageId, messageIds.beta)
+      .run();
+    await env.DB.prepare("UPDATE outbound_mail_jobs SET created_at = ? WHERE message_id = ?")
+      .bind(1, messageIds.alpha)
+      .run();
+    await env.DB.prepare("UPDATE outbound_mail_jobs SET created_at = ? WHERE message_id = ?")
+      .bind(2, messageIds.beta)
+      .run();
+    await deliver(event("bounced", "cf-shared@mail.example", "evt_cf_shared"));
+    expect(
+      await env.DB.prepare("SELECT status, terminal_reason AS reason FROM outbound_mail_jobs WHERE message_id = ?")
+        .bind(messageIds.alpha)
+        .first(),
+    ).toMatchObject({ status: "failed", reason: "email.bounced" });
+    expect(
+      await env.DB.prepare("SELECT status, terminal_reason AS reason FROM outbound_mail_jobs WHERE message_id = ?")
+        .bind(messageIds.beta)
+        .first(),
+    ).toMatchObject({ status: "pending", reason: null });
+    expect((await deliveryStatus(messageIds.beta))?.status).toBe("queued");
+  });
+
+  it("retries an event that arrives before the job records its provider id", async () => {
+    const { messageIds } = await tenants("cf-race", "<cf-race-other@mail.example>");
+    const early = await deliver(event("bounced", "cf-race@mail.example", "evt_cf_race"));
+    expect(early.retry).toHaveBeenCalledOnce();
+    expect(early.ack).not.toHaveBeenCalled();
+    expect(
+      await env.DB.prepare(
+        "SELECT processed_at AS processedAt FROM provider_webhook_events WHERE provider = 'cloudflare' AND external_event_id = ?",
+      )
+        .bind("evt_cf_race")
+        .first(),
+    ).toEqual({ processedAt: null });
+    expect((await deliveryStatus(messageIds.alpha))?.status).toBe("queued");
+    // The send's write lands, and the redelivered event is applied rather than
+    // deduped away.
+    await env.DB.prepare("UPDATE outbound_mail_jobs SET provider_message_id = ? WHERE message_id = ?")
+      .bind("<cf-race@mail.example>", messageIds.alpha)
+      .run();
+    const later = await deliver(event("bounced", "cf-race@mail.example", "evt_cf_race"));
+    expect(later.ack).toHaveBeenCalledOnce();
+    expect(later.retry).not.toHaveBeenCalled();
+    expect((await deliveryStatus(messageIds.alpha))?.status).toBe("failed");
+  });
+
   it("keeps the complaint reason so the job stays blocked from resending", async () => {
     const { messageIds } = await tenants("cf-complained", "<cf-complained@mail.example>");
     await deliver(event("complained", "cf-complained@mail.example", "evt_cf_complained"));

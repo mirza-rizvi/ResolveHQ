@@ -579,6 +579,17 @@ export async function processOutboundMail(
       await env.DB.prepare("UPDATE outbound_mail_jobs SET envelope = ?, first_attempt_at = ? WHERE id = ?")
         .bind(JSON.stringify(envelope), Date.now(), job.id)
         .run();
+    // Everything that can reject this message without reaching the provider runs
+    // first: resolving the attachment bytes and the provider's own pre-checks.
+    // A message stopped here provably never left the Worker, so it must not
+    // carry a duplicate-risk marker.
+    const resolved: OutgoingMail = {
+      ...envelope,
+      attachments: envelope.attachmentManifest?.length
+        ? await resolveOutboundAttachments(env.ATTACHMENTS, envelope.attachmentManifest)
+        : undefined,
+    };
+    provider.precheck?.(resolved);
     // A provider without an idempotency key cannot collapse a repeated send, so
     // the attempt is recorded in its own generation-fenced statement before the
     // send. A job that carries the marker was already handed to the provider
@@ -602,12 +613,6 @@ export async function processOutboundMail(
           "delivery_uncertain",
         );
     }
-    const resolved: OutgoingMail = {
-      ...envelope,
-      attachments: envelope.attachmentManifest?.length
-        ? await resolveOutboundAttachments(env.ATTACHMENTS, envelope.attachmentManifest)
-        : undefined,
-    };
     const result = await provider.send(resolved, { idempotencyKey: job.idempotencyKey });
     await db.batch([
       db
@@ -634,9 +639,10 @@ export async function processOutboundMail(
     const delay = retryDelay(attempts);
     const terminal = (error instanceof MailFailure && error.terminal) || attempts >= maxAttempts;
     const code = error instanceof MailFailure ? error.code : "delivery_uncertain";
-    // Only a synchronous rejection proves nothing left the Worker; every other
-    // failure leaves delivery unknown, so the marker stays set.
-    if (code === "provider_rejected")
+    // Only a refusal that happened before or instead of the network call proves
+    // nothing left the Worker; every other failure leaves delivery unknown, so
+    // the marker stays set.
+    if (code === "provider_rejected" || code === "attachments_too_large")
       await env.DB.prepare(
         "UPDATE outbound_mail_jobs SET send_attempted_at = NULL WHERE id = ? AND generation = ?",
       )

@@ -72,8 +72,22 @@ export default {
           continue;
         }
         try {
-          const { accepted } = await processCloudflareEmailEvent(env.DB, message.body);
-          if (!accepted) console.error({ event: "invalid_email_event", queue: batch.queue });
+          const { accepted, matched } = await processCloudflareEmailEvent(env.DB, message.body);
+          if (!accepted) {
+            const body = message.body as { type?: unknown; payload?: { eventId?: unknown } };
+            console.error({
+              event: "invalid_email_event",
+              queue: batch.queue,
+              type: typeof body?.type === "string" ? body.type : null,
+              eventId: typeof body?.payload?.eventId === "string" ? body.payload.eventId : null,
+            });
+          } else if (!matched) {
+            // The send's own D1 write may not have landed yet; retry so the
+            // outcome is applied instead of being deduped away as processed.
+            console.error({ event: "email_event_unmatched", queue: batch.queue });
+            message.retry({ delaySeconds: 60 });
+            continue;
+          }
           message.ack();
         } catch {
           console.error({ event: "email_event_failure", queue: batch.queue });

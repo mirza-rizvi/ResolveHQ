@@ -43,6 +43,12 @@ export interface IncomingMailProvider {
 export interface OutgoingMailProvider {
   readonly providerName: "resend" | "cloudflare" | "capture";
   /**
+   * Cheap synchronous validation of a resolved envelope. Callers run it before
+   * recording a non-idempotent send attempt so a message that can never be
+   * accepted stops without a duplicate-risk marker against it.
+   */
+  precheck?(message: OutgoingMail): void;
+  /**
    * True when the provider de-duplicates repeated sends of the same idempotency
    * key. A false value means every attempt can produce another copy, so the
    * caller must guard the send itself and never retry it automatically.
@@ -165,7 +171,8 @@ export class CloudflareEmailProvider implements OutgoingMailProvider {
 
   constructor(private readonly sender: SendEmail) {}
 
-  async send(message: OutgoingMail) {
+  /** Size ceiling only; nothing here reaches the network. */
+  precheck(message: OutgoingMail) {
     const rawBytes =
       byteLength(message.subject) +
       byteLength(message.text) +
@@ -177,6 +184,11 @@ export class CloudflareEmailProvider implements OutgoingMailProvider {
         true,
         "attachments_too_large",
       );
+  }
+
+  async send(message: OutgoingMail) {
+    // Defensive second layer: callers are expected to have run this already.
+    this.precheck(message);
     const builder = {
       to: message.to,
       from: message.from,
@@ -206,9 +218,14 @@ export class CloudflareEmailProvider implements OutgoingMailProvider {
     };
     let timer: ReturnType<typeof setTimeout> | undefined;
     let result: { messageId?: string };
+    // Nothing can abort a send in flight, so the binding promise outlives a
+    // timeout. It keeps its own handler or a late rejection would surface as an
+    // unhandled rejection in the consumer isolate and fail the whole batch.
+    const pending = this.sender.send(builder as Parameters<SendEmail["send"]>[0]);
+    pending.catch(() => {});
     try {
       result = await Promise.race([
-        this.sender.send(builder as Parameters<SendEmail["send"]>[0]),
+        pending,
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
             () =>

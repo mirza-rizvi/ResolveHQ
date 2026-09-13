@@ -15,6 +15,13 @@ export interface DeliveryEvent {
   /** Terminal reason recorded on the job for a failed outcome. */
   terminalReason?: string;
   detail: string;
+  /**
+   * When true, an event whose provider message id matches no outbound job is
+   * left unprocessed so a later redelivery can still apply it. Use it for
+   * transports that redeliver on failure; webhook callers that answer 200
+   * regardless should leave it false.
+   */
+  requireMatch?: boolean;
 }
 
 /**
@@ -36,35 +43,47 @@ export async function applyDeliveryEvent(database: D1Database, event: DeliveryEv
       .prepare("SELECT processed_at FROM provider_webhook_events WHERE provider = ? AND external_event_id = ?")
       .bind(event.provider, event.externalEventId)
       .first<{ processed_at: number | null }>();
-    if (prior?.processed_at != null) return { duplicate: true };
+    if (prior?.processed_at != null) return { duplicate: true, matched: true };
   }
 
-  if (event.outcome === "failed") {
+  // A provider message id is only unique within the tenant that sent it, so the
+  // owning job is resolved once and both updates are bound to its organization.
+  const owner = await database
+    .prepare(
+      "SELECT organization_id AS organizationId FROM outbound_mail_jobs WHERE provider_message_id = ? ORDER BY created_at, id LIMIT 1",
+    )
+    .bind(event.providerMessageId)
+    .first<{ organizationId: string }>();
+  if (!owner) {
+    // The send's own write may not have landed yet. Leaving processed_at NULL
+    // keeps a redelivery of the same event id usable instead of deduping it away.
+    if (event.requireMatch) return { duplicate: false, matched: false };
+  } else if (event.outcome === "failed") {
     await database
       .prepare(
-        "UPDATE messages SET delivery_status = ? WHERE id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ? AND terminal_reason IS NULL) AND organization_id IN (SELECT organization_id FROM outbound_mail_jobs WHERE provider_message_id = ?)",
+        "UPDATE messages SET delivery_status = ? WHERE organization_id = ? AND id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ? AND organization_id = ? AND terminal_reason IS NULL)",
       )
-      .bind("failed", event.providerMessageId, event.providerMessageId)
+      .bind("failed", owner.organizationId, event.providerMessageId, owner.organizationId)
       .run();
     await database
       .prepare(
-        "UPDATE outbound_mail_jobs SET status = 'failed', terminal_reason = CASE WHEN terminal_reason = 'email.complained' THEN terminal_reason ELSE ? END, last_error = ?, updated_at = ? WHERE provider_message_id = ?",
+        "UPDATE outbound_mail_jobs SET status = 'failed', terminal_reason = CASE WHEN terminal_reason = 'email.complained' THEN terminal_reason ELSE ? END, last_error = ?, updated_at = ? WHERE provider_message_id = ? AND organization_id = ?",
       )
-      .bind(event.terminalReason ?? event.eventType, event.detail, now, event.providerMessageId)
+      .bind(event.terminalReason ?? event.eventType, event.detail, now, event.providerMessageId, owner.organizationId)
       .run();
   } else if (event.outcome === "sent") {
     await database
       .prepare(
-        "UPDATE messages SET delivery_status = ? WHERE id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ? AND terminal_reason IS NULL) AND organization_id IN (SELECT organization_id FROM outbound_mail_jobs WHERE provider_message_id = ?)",
+        "UPDATE messages SET delivery_status = ? WHERE organization_id = ? AND id IN (SELECT message_id FROM outbound_mail_jobs WHERE provider_message_id = ? AND organization_id = ? AND terminal_reason IS NULL)",
       )
-      .bind("sent", event.providerMessageId, event.providerMessageId)
+      .bind("sent", owner.organizationId, event.providerMessageId, owner.organizationId)
       .run();
   }
   await database
     .prepare("UPDATE provider_webhook_events SET processed_at = ? WHERE provider = ? AND external_event_id = ?")
     .bind(now, event.provider, event.externalEventId)
     .run();
-  return { duplicate: false };
+  return { duplicate: false, matched: Boolean(owner) };
 }
 
 const cloudflareEventPrefix = "cf.email.sending.message.";
@@ -103,14 +122,19 @@ const cloudflareOutcomes: Record<string, { outcome: DeliveryOutcome; terminalRea
 /**
  * Consumes one delivery event. Returns `accepted: false` for a body that is not
  * a recognised event so the caller can acknowledge it instead of retrying it
- * forever; database failures propagate so the message is retried.
+ * forever, and `matched: false` when no outbound job carries the message id yet
+ * so the caller can retry the message; database failures propagate.
+ *
+ * The subscription is account-internal, so the event's `source` is trusted and
+ * only the fields the update needs are validated.
  */
 export async function processCloudflareEmailEvent(database: D1Database, body: unknown) {
   const parsed = cloudflareEventSchema.safeParse(body);
-  if (!parsed.success) return { accepted: false as const };
+  if (!parsed.success) return { accepted: false as const, matched: false };
   const mapping = cloudflareOutcomes[parsed.data.type.slice(cloudflareEventPrefix.length)];
-  if (!mapping) return { accepted: false as const };
-  await applyDeliveryEvent(database, {
+  if (!mapping) return { accepted: false as const, matched: false };
+  const result = await applyDeliveryEvent(database, {
+    requireMatch: true,
     provider: "cloudflare",
     externalEventId: parsed.data.payload.eventId,
     eventType: parsed.data.type,
@@ -121,5 +145,5 @@ export async function processCloudflareEmailEvent(database: D1Database, body: un
     terminalReason: mapping.terminalReason,
     detail: `Cloudflare event: ${parsed.data.type}`,
   });
-  return { accepted: true as const };
+  return { accepted: true as const, matched: result.matched };
 }

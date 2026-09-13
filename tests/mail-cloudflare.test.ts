@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CloudflareEmailProvider } from "../src/server/providers/mail";
 import { selectOutgoingProvider } from "../src/server/mail/system";
 import { processOutboundMail } from "../src/server/mail/queue";
+import { base64Url } from "../src/server/lib/crypto";
 import type { AppBindings } from "../src/server/types";
 import { request, signup } from "./helpers";
 
@@ -33,12 +34,30 @@ async function fixture(name: string) {
     session,
   );
   expect(created.status).toBe(201);
+  const { ticket } = (await created.json()) as { ticket: { id: string } };
   const job = await env.DB.prepare(
     "SELECT id, message_id AS messageId FROM outbound_mail_jobs WHERE organization_id = ?",
   )
     .bind(session.organizationId)
     .first<{ id: string; messageId: string }>();
-  return { session, job: job! };
+  return { session, ticket, job: job! };
+}
+
+/** Links `size` bytes to the fixture's message so the frozen envelope carries them. */
+async function attach(f: Awaited<ReturnType<typeof fixture>>, size: number) {
+  const id = `att_${crypto.randomUUID()}`;
+  const key = `${f.session.organizationId}/${id}/${crypto.randomUUID()}`;
+  const bytes = new Uint8Array(size).fill(65);
+  const checksum = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+  await env.ATTACHMENTS.put(key, bytes, {
+    httpMetadata: { contentType: "application/octet-stream" },
+    customMetadata: { attachmentId: id },
+  });
+  await env.DB.prepare(
+    "INSERT INTO attachments (id, organization_id, ticket_id, message_id, object_key, filename, content_type, size, checksum, created_at) VALUES (?, ?, ?, ?, ?, 'oversize.bin', 'application/octet-stream', ?, ?, ?)",
+  )
+    .bind(id, f.session.organizationId, f.ticket.id, f.job.messageId, key, size, checksum, Date.now())
+    .run();
 }
 
 function jobRow(id: string) {
@@ -172,6 +191,23 @@ describe("non-idempotent send marker", () => {
     });
     expect(email.send).not.toHaveBeenCalled();
     expect(await jobRow(f.job.id)).toMatchObject({ terminalReason: "delivery_uncertain" });
+  });
+
+  it("stops an oversized job without recording a send attempt", async () => {
+    const f = await fixture("cf-oversize");
+    await attach(f, 4 * 1024 * 1024);
+    const email = binding();
+    await expect(processOutboundMail(withBinding(email), { jobId: f.job.id })).rejects.toMatchObject({
+      terminal: true,
+      code: "attachments_too_large",
+    });
+    expect(email.send).not.toHaveBeenCalled();
+    // The message provably never left the Worker, so no duplicate risk attaches to it.
+    expect(await jobRow(f.job.id)).toMatchObject({
+      status: "failed",
+      terminalReason: "attachments_too_large",
+      sendAttemptedAt: null,
+    });
   });
 
   it("only retries a marked job once an administrator accepts the duplicate risk", async () => {
