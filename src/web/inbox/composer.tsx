@@ -119,6 +119,8 @@ export function Composer({
   const [aiBusy, setAiBusy] = useState<"draft" | "summarize" | "translate" | null>(null);
   const [summary, setSummary] = useState("");
   const [targetLanguage, setTargetLanguage] = useState("es");
+  // Empty means "let the provider work the source language out".
+  const [sourceLanguage, setSourceLanguage] = useState("");
   // The pre-translation draft is kept in view so the agent can compare and undo.
   const [originalDraft, setOriginalDraft] = useState<string | null>(null);
   async function requestAssistant(action: "draft" | "summarize") {
@@ -146,9 +148,15 @@ export function Composer({
     try {
       const result = await api<{ translation: string }>("/assistant/translate", {
         method: "POST",
-        body: JSON.stringify({ ticketId, text: original, targetLanguage }),
+        body: JSON.stringify({
+          ticketId,
+          text: original,
+          targetLanguage,
+          ...(sourceLanguage ? { sourceLanguage } : {}),
+        }),
       });
-      setOriginalDraft(original);
+      // A second translation must not bury the agent's own words.
+      setOriginalDraft((current) => current ?? original);
       onBodyChange(result.translation, "");
     } catch (reason) {
       toast.push(errorMessage(reason, "The draft could not be translated."), "error");
@@ -218,6 +226,18 @@ export function Composer({
           )}
           {aiEnabled && (
             <>
+              <select
+                aria-label="Translate draft from"
+                value={sourceLanguage}
+                onChange={(event) => setSourceLanguage(event.target.value)}
+              >
+                <option value="">From: auto</option>
+                {translationLanguages.map((language) => (
+                  <option key={language.code} value={language.code}>
+                    From: {language.label}
+                  </option>
+                ))}
+              </select>
               <select
                 aria-label="Translate draft into"
                 value={targetLanguage}

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HttpError } from "../http/errors";
+import type { AppBindings } from "../types";
 
 export interface TranslationInput {
   text: string;
@@ -18,8 +19,10 @@ export interface AIProvider {
 
 export const DEFAULT_WORKERS_AI_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 export const WORKERS_AI_TRANSLATION_MODEL = "@cf/meta/m2m100-1.2b";
-/** m2m100 is a sentence-level model; long bodies are translated paragraph by paragraph. */
+/** m2m100 is a sentence-level model; long bodies are translated a piece at a time. */
 const TRANSLATION_CHUNK_SIZE = 2_000;
+/** Generous enough that a 2,000-character chunk cannot hit the ceiling in any target language. */
+const TRANSLATION_MAX_TOKENS = 2_000;
 const MAX_OUTPUT_LENGTH = 20_000;
 
 const tasks = {
@@ -29,7 +32,9 @@ const tasks = {
   classify:
     "Return JSON with category (short topic), sentiment (positive, neutral, or negative), and tags (up to five lowercase topic strings).",
   translate:
-    "Translate the supplied text into the language named by targetLanguage, an ISO 639-1 code. Return only the translation, with no commentary or explanation.",
+    "Translate the supplied text into the language named by targetLanguage, an ISO 639-1 code. sourceLanguage, when present, names the language it is written in. Return only the translation, with no commentary or explanation.",
+  detectLanguage:
+    "Identify the language the user's text is written in. Reply with only its ISO 639-1 two-letter code, in lower case, and nothing else.",
 };
 
 /**
@@ -74,7 +79,20 @@ function unreachable(): never {
 }
 
 function unusable(): never {
-  throw new HttpError(503, "ai_invalid_response", "The AI provider returned an unusable response. Your draft is unchanged.");
+  throw new HttpError(
+    503,
+    "ai_invalid_response",
+    "The AI provider returned an unusable response. Your draft is unchanged.",
+  );
+}
+
+/** A cut-off translation must never reach the composer, which replaces the draft with it. */
+function incomplete(): never {
+  throw new HttpError(
+    503,
+    "ai_truncated",
+    "The translation came back incomplete. Your draft is unchanged; translate a shorter piece of text.",
+  );
 }
 
 function requireText(value: unknown): string {
@@ -82,23 +100,73 @@ function requireText(value: unknown): string {
   return value.trim();
 }
 
-/** Splits on paragraph boundaries first and only slices mid-paragraph when one exceeds the limit. */
-export function chunkText(text: string, size = TRANSLATION_CHUNK_SIZE): string[] {
-  const chunks: string[] = [];
-  let current = "";
-  for (const paragraph of text.split(/\n{2,}/)) {
-    for (let offset = 0; offset < paragraph.length || paragraph.length === 0; offset += size) {
-      const piece = paragraph.slice(offset, offset + size);
-      if (current && current.length + piece.length + 2 > size) {
-        chunks.push(current);
-        current = "";
-      }
-      current = current ? `${current}\n\n${piece}` : piece;
-      if (paragraph.length === 0) break;
+/** A single chunk may legitimately translate to nothing; only a non-string or an oversized one is a fault. */
+function chunkOutput(value: unknown): string {
+  if (typeof value !== "string" || value.length > MAX_OUTPUT_LENGTH) unusable();
+  return value.trim();
+}
+
+function joinTranslation(parts: string[]): string {
+  const text = parts.join("");
+  if (text.length > MAX_OUTPUT_LENGTH)
+    throw new HttpError(
+      503,
+      "ai_translation_too_long",
+      "The translation came back longer than the limit. Your draft is unchanged; translate a shorter piece of text.",
+    );
+  return text;
+}
+
+export interface TextChunk {
+  /** The source text that sat between the previous chunk and this one; empty for the first. */
+  separator: string;
+  text: string;
+}
+
+/** Prefers a sentence end, then any whitespace; only an unbroken run longer than the limit is cut mid-word. */
+function splitParagraph(paragraph: string, size: number) {
+  const window = paragraph.slice(0, size);
+  const boundary = /^[\s\S]*[.!?。！？]["')\]]?(\s+)/.exec(window) ?? /^[\s\S]*\S(\s+)/.exec(window);
+  if (boundary && boundary[0].length > boundary[1].length)
+    return {
+      head: window.slice(0, boundary[0].length - boundary[1].length),
+      gap: boundary[1],
+      tail: paragraph.slice(boundary[0].length),
+    };
+  return { head: window, gap: "", tail: paragraph.slice(size) };
+}
+
+/**
+ * Splits text for a sentence-level model while recording the exact separator
+ * that preceded each piece, so rejoining the translations reproduces the
+ * source layout instead of inventing paragraph breaks.
+ */
+export function chunkText(text: string, size = TRANSLATION_CHUNK_SIZE): TextChunk[] {
+  const chunks: TextChunk[] = [];
+  const parts = text.split(/(\n{2,})/);
+  let separator = "";
+  for (let index = 0; index < parts.length; index += 2) {
+    let remainder = parts[index] ?? "";
+    while (remainder.length > size) {
+      const { head, gap, tail } = splitParagraph(remainder, size);
+      chunks.push({ separator, text: head });
+      separator = gap;
+      remainder = tail;
     }
+    if (remainder) {
+      chunks.push({ separator, text: remainder });
+      separator = "";
+    }
+    separator += parts[index + 1] ?? "";
   }
-  if (current.trim()) chunks.push(current);
-  return chunks.length ? chunks : [text];
+  return chunks;
+}
+
+/** AI is strictly opt-in: it activates only when the Worker has a provider. */
+export function resolveAIProvider(env: AppBindings): AIProvider | null {
+  if (env.AI) return new WorkersAIProvider(env.AI, { model: env.WORKERS_AI_MODEL, gatewayId: env.AI_GATEWAY_ID });
+  if (env.OPENAI_API_KEY) return new OpenAIProvider(env.OPENAI_API_KEY, env.OPENAI_MODEL || "gpt-4o-mini");
+  return null;
 }
 
 export class OpenAIProvider implements AIProvider {
@@ -109,7 +177,11 @@ export class OpenAIProvider implements AIProvider {
     private readonly model = "gpt-4o-mini",
   ) {}
 
-  private async generate(task: string, input: unknown, json = false): Promise<string> {
+  private async complete(
+    task: string,
+    input: unknown,
+    options: { json?: boolean; maxTokens?: number } = {},
+  ): Promise<{ text: string; truncated: boolean }> {
     let response: Response;
     try {
       response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -118,8 +190,8 @@ export class OpenAIProvider implements AIProvider {
         signal: AbortSignal.timeout(25_000),
         body: JSON.stringify({
           model: this.model,
-          max_completion_tokens: 1200,
-          ...(json ? { response_format: { type: "json_object" } } : {}),
+          max_completion_tokens: options.maxTokens ?? 1200,
+          ...(options.json ? { response_format: { type: "json_object" } } : {}),
           messages: [
             { role: "system", content: systemPrompt(task) },
             { role: "user", content: JSON.stringify(input) },
@@ -137,12 +209,20 @@ export class OpenAIProvider implements AIProvider {
         "The AI provider rejected the request. Ask your administrator to check its credentials, model, and usage limits.",
       );
     }
+    let result: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }> };
     try {
-      const result = (await response.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
-      return requireText(result.choices?.[0]?.message?.content);
+      result = (await response.json()) as typeof result;
     } catch {
       unusable();
     }
+    return {
+      text: requireText(result.choices?.[0]?.message?.content),
+      truncated: result.choices?.[0]?.finish_reason === "length",
+    };
+  }
+
+  private async generate(task: string, input: unknown, json = false): Promise<string> {
+    return (await this.complete(task, input, { json })).text;
   }
 
   summarize(input: { subject: string; messages: string[] }) {
@@ -157,8 +237,24 @@ export class OpenAIProvider implements AIProvider {
     return parseClassification(await this.generate(tasks.classify, input, true));
   }
 
+  /** Chunked like the Workers AI path so a long draft cannot come back cut off. */
   async translate(input: TranslationInput) {
-    return { text: await this.generate(tasks.translate, input) };
+    const parts: string[] = [];
+    for (const chunk of chunkText(input.text)) {
+      parts.push(chunk.separator);
+      if (!chunk.text.trim()) {
+        parts.push(chunk.text);
+        continue;
+      }
+      const result = await this.complete(
+        tasks.translate,
+        { targetLanguage: input.targetLanguage, sourceLanguage: input.sourceLanguage, text: chunk.text },
+        { maxTokens: TRANSLATION_MAX_TOKENS },
+      );
+      if (result.truncated) incomplete();
+      parts.push(result.text);
+    }
+    return { text: joinTranslation(parts) };
   }
 }
 
@@ -188,7 +284,15 @@ export class WorkersAIProvider implements AIProvider {
   private async invoke(model: string, inputs: Record<string, unknown>): Promise<unknown> {
     try {
       return await this.run(model, inputs, this.gatewayId ? { gateway: { id: this.gatewayId } } : undefined);
-    } catch {
+    } catch (reason) {
+      // The daily neuron allowance is the expected production failure; it is not an outage.
+      const detail = reason instanceof Error ? reason.message : String(reason);
+      if (/quota|neuron|429|too many requests|capacity/i.test(detail))
+        throw new HttpError(
+          503,
+          "ai_quota",
+          "The Workers AI allowance for this account is used up. Your draft is unchanged; try again after it resets.",
+        );
       unreachable();
     }
   }
@@ -204,6 +308,21 @@ export class WorkersAIProvider implements AIProvider {
     return requireText((result as { response?: unknown } | null)?.response);
   }
 
+  /** m2m100 needs an explicit source language; the text model supplies one when the agent did not. */
+  private async detectLanguage(text: string): Promise<string> {
+    const result = await this.invoke(this.model, {
+      messages: [
+        { role: "system", content: systemPrompt(tasks.detectLanguage) },
+        { role: "user", content: text.slice(0, 1_000) },
+      ],
+      max_tokens: 8,
+    });
+    const code = String((result as { response?: unknown } | null)?.response ?? "")
+      .trim()
+      .toLowerCase();
+    return /^[a-z]{2}$/.test(code) ? code : "en";
+  }
+
   summarize(input: { subject: string; messages: string[] }) {
     return this.generate(tasks.summarize, input);
   }
@@ -217,15 +336,22 @@ export class WorkersAIProvider implements AIProvider {
   }
 
   async translate(input: TranslationInput) {
+    const chunks = chunkText(input.text);
+    const sourceLanguage = input.sourceLanguage ?? (await this.detectLanguage(input.text));
     const parts: string[] = [];
-    for (const chunk of chunkText(input.text)) {
+    for (const chunk of chunks) {
+      parts.push(chunk.separator);
+      if (!chunk.text.trim()) {
+        parts.push(chunk.text);
+        continue;
+      }
       const result = await this.invoke(WORKERS_AI_TRANSLATION_MODEL, {
-        text: chunk,
-        source_lang: input.sourceLanguage ?? "en",
+        text: chunk.text,
+        source_lang: sourceLanguage,
         target_lang: input.targetLanguage,
       });
-      parts.push(requireText((result as { translated_text?: unknown } | null)?.translated_text));
+      parts.push(chunkOutput((result as { translated_text?: unknown } | null)?.translated_text));
     }
-    return { text: parts.join("\n\n") };
+    return { text: joinTranslation(parts) };
   }
 }

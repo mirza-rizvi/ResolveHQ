@@ -16,7 +16,7 @@ import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
 import { sendSystemMail } from "resolve-server/mail/system";
-import { resolveAIProvider } from "../assistant/routes";
+import { resolveAIProvider } from "../providers/ai";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import type { HonoEnv } from "resolve-server/types";

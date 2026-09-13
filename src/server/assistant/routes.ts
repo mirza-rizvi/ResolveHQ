@@ -6,20 +6,9 @@ import { createDb } from "../db";
 import { messages, tickets } from "../db/schema";
 import { HttpError } from "../http/errors";
 import { validate } from "../http/validate";
-import { OpenAIProvider, WorkersAIProvider, type AIProvider } from "../providers/ai";
+import { resolveAIProvider, type AIProvider } from "../providers/ai";
 import { readAiEnabled } from "../organizations/settings";
 import type { AppBindings, HonoEnv, TenantContext } from "../types";
-
-/**
- * AI is strictly opt-in: it activates only when the Worker has a provider. The
- * Workers AI binding wins because it keeps conversation text inside the
- * deployer's own Cloudflare account; the OpenAI key stays as a fallback.
- */
-export function resolveAIProvider(env: AppBindings): AIProvider | null {
-  if (env.AI) return new WorkersAIProvider(env.AI, { model: env.WORKERS_AI_MODEL, gatewayId: env.AI_GATEWAY_ID });
-  if (env.OPENAI_API_KEY) return new OpenAIProvider(env.OPENAI_API_KEY, env.OPENAI_MODEL || "gpt-4o-mini");
-  return null;
-}
 
 const ticketThreadInput = z.object({
   ticketId: z.string().min(1).max(80),
@@ -29,7 +18,9 @@ const ticketThreadInput = z.object({
 const translateInput = z
   .object({
     ticketId: z.string().min(1).max(80),
-    targetLanguage: z.string().regex(/^[a-z]{2}(-[A-Z]{2})?$/),
+    // Two-letter ISO 639-1 only: the Workers AI translation model rejects regional tags.
+    targetLanguage: z.string().regex(/^[a-z]{2}$/),
+    sourceLanguage: z.string().regex(/^[a-z]{2}$/).optional(),
     messageId: z.string().min(1).max(80).optional(),
     text: z.string().trim().min(1).max(20_000).optional(),
   })
@@ -171,6 +162,10 @@ assistantRoutes.post("/translate", validate("json", translateInput), async (cont
   }
   source = source.slice(0, 20_000).trim();
   if (!source) throw new HttpError(400, "nothing_to_translate", "There is no text to translate.");
-  const translation = await provider.translate({ text: source, targetLanguage: input.targetLanguage });
+  const translation = await provider.translate({
+    text: source,
+    targetLanguage: input.targetLanguage,
+    sourceLanguage: input.sourceLanguage,
+  });
   return context.json({ translation: translation.text, targetLanguage: input.targetLanguage });
 });

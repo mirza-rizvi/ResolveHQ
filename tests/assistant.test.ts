@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import app from "resolve-server/app";
-import { resolveAIProvider } from "resolve-server/assistant/routes";
+import { OpenAIProvider, chunkText, resolveAIProvider } from "resolve-server/providers/ai";
 import type { AppBindings } from "resolve-server/types";
 import { request, signup, type TestSession } from "./helpers";
 
@@ -156,7 +156,7 @@ describe("assistant translation", () => {
     const paragraph = `${"a".repeat(1_500)}\n\n${"b".repeat(1_500)}`;
     const response = await requestWith(
       "/assistant/translate",
-      { method: "POST", body: JSON.stringify({ ticketId, text: paragraph, targetLanguage: "fr" }) },
+      { method: "POST", body: JSON.stringify({ ticketId, text: paragraph, targetLanguage: "fr", sourceLanguage: "en" }) },
       session,
       aiEnv(binding, { AI_GATEWAY_ID: "resolvehq-gateway" }),
     );
@@ -190,5 +190,153 @@ describe("assistant classification", () => {
       expect.objectContaining({ max_tokens: 1200 }),
       undefined,
     );
+  });
+});
+
+describe("translation chunking", () => {
+  it("keeps word and paragraph boundaries when a paragraph exceeds the chunk size", async () => {
+    const session = await signup("chunk-layout");
+    await enableAi(session);
+    const { ticketId } = await seedTicket(session, "chunk-layout");
+    const paragraph = Array.from({ length: 700 }, (_, index) => `word${index}`).join(" ");
+    expect(paragraph.length).toBeGreaterThan(5_000);
+    // Echoing the input back means any layout the join invents shows up as a difference.
+    const binding = fakeAi(async (_model, inputs) => ({ translated_text: inputs.text }));
+    const response = await requestWith(
+      "/assistant/translate",
+      { method: "POST", body: JSON.stringify({ ticketId, text: paragraph, targetLanguage: "fr", sourceLanguage: "en" }) },
+      session,
+      aiEnv(binding),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { translation: string };
+    expect(body.translation).toBe(paragraph);
+    expect(body.translation).not.toContain("\n\n");
+    const sent = binding.run.mock.calls.map((call) => String(call[1].text));
+    expect(sent.length).toBeGreaterThan(1);
+    // No chunk may cut a word: the words seen by the model are exactly the source words.
+    expect(sent.flatMap((chunk) => chunk.split(/\s+/))).toEqual(paragraph.split(/\s+/));
+  });
+
+  it("reproduces the original paragraph separators", () => {
+    const source = "First paragraph.\n\n\nSecond paragraph.";
+    const chunks = chunkText(source, 2_000);
+    expect(chunks.map((chunk) => chunk.separator + chunk.text).join("")).toBe(source);
+  });
+
+  it("tolerates a chunk that translates to nothing", async () => {
+    const session = await signup("chunk-empty");
+    await enableAi(session);
+    const { ticketId } = await seedTicket(session, "chunk-empty");
+    let call = 0;
+    const binding = fakeAi(async () => {
+      call += 1;
+      return { translated_text: call === 1 ? "Bonjour" : "   " };
+    });
+    const response = await requestWith(
+      "/assistant/translate",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ticketId,
+          text: `${"mot ".repeat(600).trim()}\n\nsecond`,
+          targetLanguage: "fr",
+          sourceLanguage: "en",
+        }),
+      },
+      session,
+      aiEnv(binding),
+    );
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { translation: string }).translation).toContain("Bonjour");
+  });
+});
+
+describe("translation source language", () => {
+  it("detects the source language when the agent leaves it on auto", async () => {
+    const session = await signup("detect-source");
+    await enableAi(session);
+    const { ticketId, messageId } = await seedTicket(session, "detect-source");
+    const binding = fakeAi(async (model) =>
+      model === "@cf/meta/m2m100-1.2b" ? { translated_text: "Hello" } : { response: " DE\n" },
+    );
+    const response = await requestWith(
+      "/assistant/translate",
+      { method: "POST", body: JSON.stringify({ ticketId, messageId, targetLanguage: "en" }) },
+      session,
+      aiEnv(binding),
+    );
+    expect(response.status).toBe(200);
+    expect(binding.run).toHaveBeenCalledTimes(2);
+    expect(binding.run.mock.calls[0][0]).toBe("@cf/meta/llama-4-scout-17b-16e-instruct");
+    expect(binding.run.mock.calls[1][1]).toMatchObject({ source_lang: "de", target_lang: "en" });
+  });
+
+  it("skips detection when the agent picks a source and rejects regional tags", async () => {
+    const session = await signup("explicit-source");
+    await enableAi(session);
+    const { ticketId, messageId } = await seedTicket(session, "explicit-source");
+    const binding = fakeAi();
+    const response = await requestWith(
+      "/assistant/translate",
+      { method: "POST", body: JSON.stringify({ ticketId, messageId, targetLanguage: "en", sourceLanguage: "es" }) },
+      session,
+      aiEnv(binding),
+    );
+    expect(response.status).toBe(200);
+    expect(binding.run).toHaveBeenCalledTimes(1);
+    expect(binding.run.mock.calls[0][1]).toMatchObject({ source_lang: "es" });
+    const regional = await requestWith(
+      "/assistant/translate",
+      { method: "POST", body: JSON.stringify({ ticketId, messageId, targetLanguage: "pt-BR" }) },
+      session,
+      aiEnv(binding),
+    );
+    expect(regional.status).toBe(400);
+  });
+});
+
+describe("provider failures", () => {
+  it("reports an exhausted Workers AI allowance separately from an outage", async () => {
+    const session = await signup("quota");
+    await enableAi(session);
+    const { ticketId, messageId } = await seedTicket(session, "quota");
+    const binding = fakeAi(async () => {
+      throw new Error("AiError: 429 Too Many Requests - account neurons quota exceeded");
+    });
+    const response = await requestWith(
+      "/assistant/translate",
+      { method: "POST", body: JSON.stringify({ ticketId, messageId, targetLanguage: "es", sourceLanguage: "en" }) },
+      session,
+      aiEnv(binding),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: { code: "ai_quota" } });
+  });
+
+  it("chunks OpenAI translation and refuses a truncated chunk", async () => {
+    const sent: string[] = [];
+    const replies: Array<{ content: string; finish_reason: string }> = [
+      { content: "un", finish_reason: "stop" },
+      { content: "deux", finish_reason: "stop" },
+    ];
+    const fetchMock = vi.fn(async (_input: unknown, init: RequestInit) => {
+      const payload = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+      sent.push((JSON.parse(payload.messages[1].content) as { text: string }).text);
+      const reply = replies.shift() ?? { content: "cut off", finish_reason: "length" };
+      return Response.json({ choices: [{ message: { content: reply.content }, finish_reason: reply.finish_reason }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const provider = new OpenAIProvider("sk-test");
+      const text = `${"alpha ".repeat(200).trim()}\n\n${"beta ".repeat(200).trim()}`;
+      expect(await provider.translate({ text, targetLanguage: "fr" })).toEqual({ text: "un\n\ndeux" });
+      expect(sent).toHaveLength(2);
+      await expect(provider.translate({ text: "short", targetLanguage: "fr" })).rejects.toMatchObject({
+        code: "ai_truncated",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -26,6 +26,7 @@ export function ThreadMessage({
 }: ThreadMessageProps) {
   const toast = useToast();
   const [targetLanguage, setTargetLanguage] = useState("en");
+  const [sourceLanguage, setSourceLanguage] = useState("");
   const [translation, setTranslation] = useState<string | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const [translating, setTranslating] = useState(false);
@@ -35,7 +36,13 @@ export function ThreadMessage({
     try {
       const result = await api<{ translation: string }>("/assistant/translate", {
         method: "POST",
-        body: JSON.stringify({ ticketId: message.ticketId, messageId: message.id, targetLanguage }),
+        // Always sent by id, so re-translating works from the stored original, never from a translation.
+        body: JSON.stringify({
+          ticketId: message.ticketId,
+          messageId: message.id,
+          targetLanguage,
+          ...(sourceLanguage ? { sourceLanguage } : {}),
+        }),
       });
       setTranslation(result.translation);
       setShowOriginal(false);
@@ -87,9 +94,21 @@ export function ThreadMessage({
           </button>
         </div>
       )}
-      {aiEnabled && translation === null && message.bodyText.trim() && (
+      {aiEnabled && message.bodyText.trim() && (
         <div className="thread-translate">
           <Languages size={13} />
+          <select
+            aria-label="Translate message from"
+            value={sourceLanguage}
+            onChange={(event) => setSourceLanguage(event.target.value)}
+          >
+            <option value="">From: auto</option>
+            {translationLanguages.map((language) => (
+              <option key={language.code} value={language.code}>
+                From: {language.label}
+              </option>
+            ))}
+          </select>
           <select
             aria-label="Translate message into"
             value={targetLanguage}
@@ -102,7 +121,7 @@ export function ThreadMessage({
             ))}
           </select>
           <button type="button" disabled={translating} onClick={() => void translate()}>
-            {translating ? "Translating…" : "Translate"}
+            {translating ? "Translating…" : translation === null ? "Translate" : "Translate again"}
           </button>
         </div>
       )}
