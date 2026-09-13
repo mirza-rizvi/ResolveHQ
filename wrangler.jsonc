@@ -16,6 +16,7 @@
     "resolve-server/lib/id": "./src/server/lib/id.ts",
     "resolve-server/lib/sanitize-html": "./src/server/lib/sanitize-html.ts",
     "resolve-server/mail/queue": "./src/server/mail/queue.ts",
+    "resolve-server/organizations/settings": "./src/server/organizations/settings.ts",
     "resolve-server/mail/system": "./src/server/mail/system.ts",
     "resolve-server/providers/storage": "./src/server/providers/storage.ts",
     "resolve-server/search/index": "./src/server/search/index.ts",
