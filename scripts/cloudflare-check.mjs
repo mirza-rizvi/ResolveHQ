@@ -28,6 +28,10 @@ for (const binding of ["INBOUND_MAIL_QUEUE", "OUTBOUND_MAIL_QUEUE", "MAINTENANCE
     `${binding}: producer, bounded consumer, and dead-letter queue configured`,
   );
 }
+check(
+  config.ai?.binding === "AI",
+  "Workers AI binding configured (OPENAI_API_KEY remains the fallback when it is absent)",
+);
 check(config.triggers?.crons?.length && /scheduled\s*\(/.test(worker), "Cron configured with handler");
 check(/email\s*\(/.test(worker), "Email handler configured (Email Routing rule requires dashboard setup)");
 check(

@@ -1,5 +1,9 @@
-import { Paperclip } from "lucide-react";
+import { useState } from "react";
+import { Languages, Paperclip } from "lucide-react";
+import { useToast } from "@/web/components/toast";
+import { api, errorMessage } from "@/web/lib/api";
 import { formatBytes, formatDate } from "./format";
+import { translationLanguages } from "./languages";
 import type { AttachmentSummary, ThreadMessage as ThreadMessageModel } from "./types";
 
 interface ThreadMessageProps {
@@ -7,11 +11,41 @@ interface ThreadMessageProps {
   customerName: string;
   customerEmail: string;
   attachments: AttachmentSummary[];
+  /** Translation is offered only where the workspace has opted into AI. */
+  aiEnabled?: boolean;
 }
 
 const deliveryLabels: Record<string, string> = { queued: "Queued", sent: "Sent", failed: "Failed" };
 
-export function ThreadMessage({ message, customerName, customerEmail, attachments }: ThreadMessageProps) {
+export function ThreadMessage({
+  message,
+  customerName,
+  customerEmail,
+  attachments,
+  aiEnabled = false,
+}: ThreadMessageProps) {
+  const toast = useToast();
+  const [targetLanguage, setTargetLanguage] = useState("en");
+  const [translation, setTranslation] = useState<string | null>(null);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [translating, setTranslating] = useState(false);
+
+  async function translate() {
+    setTranslating(true);
+    try {
+      const result = await api<{ translation: string }>("/assistant/translate", {
+        method: "POST",
+        body: JSON.stringify({ ticketId: message.ticketId, messageId: message.id, targetLanguage }),
+      });
+      setTranslation(result.translation);
+      setShowOriginal(false);
+    } catch (reason) {
+      toast.push(errorMessage(reason, "The message could not be translated."), "error");
+    } finally {
+      setTranslating(false);
+    }
+  }
+
   if (message.authorType === "system") {
     return (
       <article className="thread-entry system">
@@ -39,10 +73,38 @@ export function ThreadMessage({ message, customerName, customerEmail, attachment
         <time>{formatDate(message.createdAt)}</time>
       </header>
       {/* The server sanitises agent HTML on the way in; customer mail stays text. */}
-      {message.authorType === "agent" && message.bodyHtml ? (
-        <div className="thread-body" dangerouslySetInnerHTML={{ __html: message.bodyHtml }} />
-      ) : (
-        <p>{message.bodyText}</p>
+      {(translation === null || showOriginal) &&
+        (message.authorType === "agent" && message.bodyHtml ? (
+          <div className="thread-body" dangerouslySetInnerHTML={{ __html: message.bodyHtml }} />
+        ) : (
+          <p>{message.bodyText}</p>
+        ))}
+      {translation !== null && (
+        <div className="thread-translation">
+          <p>{translation}</p>
+          <button type="button" onClick={() => setShowOriginal((current) => !current)}>
+            {showOriginal ? "Hide original" : "Show original"}
+          </button>
+        </div>
+      )}
+      {aiEnabled && translation === null && message.bodyText.trim() && (
+        <div className="thread-translate">
+          <Languages size={13} />
+          <select
+            aria-label="Translate message into"
+            value={targetLanguage}
+            onChange={(event) => setTargetLanguage(event.target.value)}
+          >
+            {translationLanguages.map((language) => (
+              <option key={language.code} value={language.code}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" disabled={translating} onClick={() => void translate()}>
+            {translating ? "Translating…" : "Translate"}
+          </button>
+        </div>
       )}
       {delivery && (
         <span className={`delivery-badge ${message.deliveryStatus}`} title={message.deliveryError ?? undefined}>

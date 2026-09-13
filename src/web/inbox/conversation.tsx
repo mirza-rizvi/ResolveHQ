@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Check, MessageSquareText, PanelRightOpen, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/web/auth";
@@ -76,6 +77,12 @@ export function ConversationPanel({
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
   const canManage = session?.role === "owner" || session?.role === "admin";
+  // Shares the composer's cache entry; the thread only needs the opt-in flag.
+  const aiQuery = useQuery({
+    queryKey: ["organization-settings"],
+    queryFn: () => api<{ ai: { enabled: boolean; provider: string | null } }>("/organization/settings"),
+    staleTime: 5 * 60_000,
+  });
 
   async function deleteTicket() {
     if (!conversation || !window.confirm(`Delete ticket #${conversation.ticket.number}? This cannot be undone.`))
@@ -269,6 +276,7 @@ export function ConversationPanel({
                 customerName={conversation.ticket.customerName}
                 customerEmail={conversation.ticket.customerEmail}
                 attachments={conversation.attachments.filter((file) => file.messageId === message.id)}
+                aiEnabled={aiQuery.data?.ai.enabled === true}
               />
             ))}
           </div>

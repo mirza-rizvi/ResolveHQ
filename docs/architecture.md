@@ -70,9 +70,9 @@ Tiers, in order, all scoped to the resolved inbox's organization:
 
 The scheduled handler runs every five minutes. Each sweep touches at most 20 candidate rows: expired sessions, invitations and reset tokens; expired 20-minute mail leases; exhausted retries; and missing outbound outbox rows after a two-minute grace period. D1 dispatch reservations prevent repeated enqueueing while a delivery is in flight. Cleanup discovery creates durable maintenance tasks only when old objects exist; maintenance consumers process five objects or customer-search tickets per invocation. Raw staging objects become cleanup candidates after seven days; unlinked uploads and abandoned reservations after one day. See the [Free-plan audit](cloudflare-free.md) for retry windows, manual recovery, and remaining CPU limits.
 
-`AIProvider` exposes optional summarize, draft, classify, sentiment, similar-ticket, and tag suggestions. The default provider reports that AI is unavailable; core workflows never depend on it.
+`AIProvider` exposes optional summarize, draft, classify, translate, sentiment, similar-ticket, and tag suggestions. The default provider reports that AI is unavailable; core workflows never depend on it.
 
-The `OpenAIProvider` implementation activates when `OPENAI_API_KEY` is configured on the Worker. Conversation content is passed as untrusted data, every response is validated, and failures surface as `502`/`503` errors the UI reports without touching the agent's draft.
+Two implementations exist and `resolveAIProvider` picks between them: `WorkersAIProvider` when the `AI` binding is present, otherwise `OpenAIProvider` when `OPENAI_API_KEY` is configured, otherwise none. Workers AI is preferred because inference then runs inside the deployer's own Cloudflare account. Both share the same system prompt, so conversation content is passed as untrusted data either way; every response is validated, classification JSON is extracted from whatever wrapper text the model returns, and failures surface as `502`/`503` errors the UI reports without touching the agent's draft. Translation uses `@cf/meta/m2m100-1.2b` in chunks of at most 2,000 characters, or a chat prompt on OpenAI.
 
 ### Erasure
 

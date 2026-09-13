@@ -18,7 +18,7 @@ ResolveHQ is a Cloudflare-native, self-hostable helpdesk for small support teams
 - Notify agents of assignments and customer replies in-app, and work comfortably in light or dark mode.
 - Export everything stored about a customer as JSON, or erase it with a durable, resumable workflow that cancels queued mail.
 - Recover automatically: a five-minute cron job retries stalled mail jobs and cleans up staging and orphaned data.
-- Control AI assistance per workspace: it stays off until an admin enables it in Settings, and only then are ticket conversations sent to OpenAI.
+- Control AI assistance per workspace: it stays off until an admin enables it in Settings, and only then are ticket conversations sent to the configured provider.
 - Set `TICKET_RETENTION_DAYS` (for example `365`) to have the scheduled sweep permanently delete resolved and closed tickets older than that window, including attachments.
 
 ## Interface
@@ -67,7 +67,7 @@ The Vite application runs on `http://localhost:5173` and proxies `/api` to Wrang
 
 ## Optional configuration
 
-- **AI assistance**: set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets to make AI available. Each workspace still opts in through Settings; without a key the feature stays hidden and no AI calls are made.
+- **AI assistance**: summaries, reply drafts, classification, and translation. The Worker prefers Cloudflare Workers AI, which runs in your own account; `wrangler.jsonc` declares the `AI` binding, so a normal deploy provisions it and no key is needed. Set `WORKERS_AI_MODEL` to change the text model (default `@cf/meta/llama-4-scout-17b-16e-instruct`; translation always uses `@cf/meta/m2m100-1.2b`) or `AI_GATEWAY_ID` to send the calls through an AI Gateway. OpenAI is still supported: without the binding, `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) is used instead. Either way each workspace opts in through Settings, and with neither configured the feature stays hidden and no AI calls are made.
 - **Retention**: set `TICKET_RETENTION_DAYS` as a Worker variable to automatically delete resolved and closed tickets (with attachments) after that many days. Unset means nothing is deleted automatically.
 - **Turnstile**: set `TURNSTILE_SITE_KEY` as a Worker variable and `TURNSTILE_SECRET_KEY` as a Worker secret to add a Cloudflare Turnstile challenge to sign-in, sign-up, and forgot-password. Leave both unset and the forms behave exactly as before, with no script loaded and no challenge shown.
 

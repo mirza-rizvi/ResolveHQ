@@ -17,7 +17,7 @@ interface SettingsData {
     disabledAt: string | null;
   }>;
   mail: { resendConfigured: boolean; webhookConfigured: boolean };
-  ai: { available: boolean; enabled: boolean };
+  ai: { available: boolean; enabled: boolean; provider: "workers-ai" | "openai" | null };
 }
 interface MailCapture {
   id: string;
@@ -237,15 +237,24 @@ export function SettingsPage() {
             AI assistance
           </h2>
           <p>
-            Off by default. When enabled, AI drafting and summaries send this workspace's ticket conversations to
-            OpenAI for processing, subject to OpenAI's data policies.
+            {data.ai.provider === "workers-ai"
+              ? "Off by default. When enabled, AI drafting, summaries, and translation send this workspace's ticket conversations to Cloudflare Workers AI, which runs in your own Cloudflare account."
+              : data.ai.provider === "openai"
+                ? "Off by default. When enabled, AI drafting, summaries, and translation send this workspace's ticket conversations to OpenAI for processing, subject to OpenAI's data policies."
+                : "Off by default. When a provider is configured on the Worker, AI drafting, summaries, and translation send this workspace's ticket conversations to that provider."}
           </p>
         </div>
         <div className="settings-inboxes">
           <dl className="readiness-list">
             <div>
-              <dt>OpenAI API key</dt>
-              <dd>{data.ai.available ? "Configured" : "Missing"}</dd>
+              <dt>Provider</dt>
+              <dd>
+                {data.ai.provider === "workers-ai"
+                  ? "Cloudflare Workers AI"
+                  : data.ai.provider === "openai"
+                    ? "OpenAI"
+                    : "Missing"}
+              </dd>
             </div>
             <div>
               <dt>This workspace</dt>
@@ -265,7 +274,10 @@ export function SettingsPage() {
             </form>
           )}
           {!data.ai.available && (
-            <p className="settings-empty">Set OPENAI_API_KEY on the Worker to make AI available to workspaces.</p>
+            <p className="settings-empty">
+              Deploy the Worker with the Workers AI binding, or set OPENAI_API_KEY on it, to make AI available to
+              workspaces.
+            </p>
           )}
         </div>
        </section>

@@ -16,6 +16,7 @@ import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
 import { sendSystemMail } from "resolve-server/mail/system";
+import { resolveAIProvider } from "../assistant/routes";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
 import type { HonoEnv } from "resolve-server/types";
@@ -53,6 +54,8 @@ organizationRoutes.get("/settings", async (context) => {
   const tenant = context.get("tenant");
   const db = createDb(context.env.DB);
   const aiEnabled = await readAiEnabled(context.env.DB, tenant.organizationId);
+  // Built only to report which backend is active; constructing a provider makes no call.
+  const aiProvider = resolveAIProvider(context.env);
   const [workspace, inboxRows] = await Promise.all([
     db
       .select({ id: organizations.id, name: organizations.name, slug: organizations.slug })
@@ -79,7 +82,7 @@ organizationRoutes.get("/settings", async (context) => {
       resendConfigured: Boolean(context.env.RESEND_API_KEY),
       webhookConfigured: Boolean(context.env.RESEND_WEBHOOK_SECRET),
     },
-    ai: { available: Boolean(context.env.OPENAI_API_KEY), enabled: aiEnabled },
+    ai: { available: aiProvider !== null, enabled: aiEnabled, provider: aiProvider?.providerName ?? null },
   });
 });
 

@@ -6,20 +6,36 @@ import { createDb } from "../db";
 import { messages, tickets } from "../db/schema";
 import { HttpError } from "../http/errors";
 import { validate } from "../http/validate";
-import { OpenAIProvider, type AIProvider } from "../providers/ai";
+import { OpenAIProvider, WorkersAIProvider, type AIProvider } from "../providers/ai";
 import { readAiEnabled } from "../organizations/settings";
 import type { AppBindings, HonoEnv, TenantContext } from "../types";
 
-/** AI is strictly opt-in: it activates only when an API key is configured. */
+/**
+ * AI is strictly opt-in: it activates only when the Worker has a provider. The
+ * Workers AI binding wins because it keeps conversation text inside the
+ * deployer's own Cloudflare account; the OpenAI key stays as a fallback.
+ */
 export function resolveAIProvider(env: AppBindings): AIProvider | null {
-  if (!env.OPENAI_API_KEY) return null;
-  return new OpenAIProvider(env.OPENAI_API_KEY, env.OPENAI_MODEL || "gpt-4o-mini");
+  if (env.AI) return new WorkersAIProvider(env.AI, { model: env.WORKERS_AI_MODEL, gatewayId: env.AI_GATEWAY_ID });
+  if (env.OPENAI_API_KEY) return new OpenAIProvider(env.OPENAI_API_KEY, env.OPENAI_MODEL || "gpt-4o-mini");
+  return null;
 }
 
 const ticketThreadInput = z.object({
   ticketId: z.string().min(1).max(80),
   instruction: z.string().trim().max(2_000).optional(),
 });
+
+const translateInput = z
+  .object({
+    ticketId: z.string().min(1).max(80),
+    targetLanguage: z.string().regex(/^[a-z]{2}(-[A-Z]{2})?$/),
+    messageId: z.string().min(1).max(80).optional(),
+    text: z.string().trim().min(1).max(20_000).optional(),
+  })
+  .refine((input) => Boolean(input.messageId) !== Boolean(input.text), {
+    message: "Provide either messageId or text.",
+  });
 
 interface AssistantRequestContext {
   env: AppBindings;
@@ -51,7 +67,7 @@ async function requireWorkspaceProvider(env: AppBindings, organizationId: string
     throw new HttpError(
       503,
       "ai_unavailable",
-      "AI assistance is not configured. Set OPENAI_API_KEY on the Worker to enable it.",
+      "AI assistance is not configured. Add the Workers AI binding (AI) or set OPENAI_API_KEY on the Worker to enable it.",
     );
   return provider;
 }
@@ -119,4 +135,42 @@ assistantRoutes.post("/classify", validate("json", ticketThreadInput), async (co
     body: thread.thread,
   });
   return context.json({ classification });
+});
+
+/**
+ * Translation reads one stored message or takes text from the composer. Both
+ * paths resolve the ticket inside the caller's organization first, so a message
+ * id from another workspace resolves to nothing rather than to its body.
+ */
+assistantRoutes.post("/translate", validate("json", translateInput), async (context) => {
+  const tenant = await authorizeAssistantRequest(context);
+  const input = context.req.valid("json");
+  const provider = await requireWorkspaceProvider(context.env, tenant.organizationId);
+  const db = createDb(context.env.DB);
+  const [ticket] = await db
+    .select({ id: tickets.id })
+    .from(tickets)
+    .where(and(eq(tickets.id, input.ticketId), eq(tickets.organizationId, tenant.organizationId)))
+    .limit(1);
+  if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
+  let source = input.text ?? "";
+  if (input.messageId) {
+    const [message] = await db
+      .select({ bodyText: messages.bodyText })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, input.messageId),
+          eq(messages.organizationId, tenant.organizationId),
+          eq(messages.ticketId, ticket.id),
+        ),
+      )
+      .limit(1);
+    if (!message) throw new HttpError(404, "message_not_found", "Message not found.");
+    source = message.bodyText;
+  }
+  source = source.slice(0, 20_000).trim();
+  if (!source) throw new HttpError(400, "nothing_to_translate", "There is no text to translate.");
+  const translation = await provider.translate({ text: source, targetLanguage: input.targetLanguage });
+  return context.json({ translation: translation.text, targetLanguage: input.targetLanguage });
 });

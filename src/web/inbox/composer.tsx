@@ -1,6 +1,6 @@
 import { lazy, Suspense, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Paperclip, Send, Sparkles, StickyNote, X } from "lucide-react";
+import { Languages, Loader2, Paperclip, Send, Sparkles, StickyNote, X } from "lucide-react";
 import { useToast } from "@/web/components/toast";
 import type { RichComposerHandle } from "@/web/components/rich-composer";
 import { api as apiClient } from "@/web/lib/api";
@@ -9,6 +9,7 @@ import type { DraftStatus } from "@/web/hooks/use-draft";
 import { api, errorMessage } from "@/web/lib/api";
 import { attachmentAccept, maxAttachmentSize, resolveContentType } from "./attachments";
 import { formatBytes, formatClock } from "./format";
+import { providerLabel, translationLanguages } from "./languages";
 import type { MessageKind, SavedReply } from "./types";
 
 const RichComposer = lazy(() =>
@@ -57,11 +58,12 @@ export function Composer({
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const aiQuery = useQuery({
     queryKey: ["organization-settings"],
-    queryFn: () => apiClient<{ ai: { enabled: boolean } }>("/organization/settings"),
+    queryFn: () => apiClient<{ ai: { enabled: boolean; provider: string | null } }>("/organization/settings"),
     staleTime: 5 * 60_000,
   });
   const uploading = attachments.some((file) => !file.id);
   const aiEnabled = aiQuery.data?.ai.enabled === true;
+  const aiProvider = providerLabel(aiQuery.data?.ai.provider);
 
   async function upload(file: File) {
     if (file.size > maxAttachmentSize) {
@@ -114,8 +116,11 @@ export function Composer({
     if (editorRef.current) editorRef.current.insertText(reply.content);
     else onBodyChange(body ? `${body}\n\n${reply.content}` : reply.content, "");
   }
-  const [aiBusy, setAiBusy] = useState<"draft" | "summarize" | null>(null);
+  const [aiBusy, setAiBusy] = useState<"draft" | "summarize" | "translate" | null>(null);
   const [summary, setSummary] = useState("");
+  const [targetLanguage, setTargetLanguage] = useState("es");
+  // The pre-translation draft is kept in view so the agent can compare and undo.
+  const [originalDraft, setOriginalDraft] = useState<string | null>(null);
   async function requestAssistant(action: "draft" | "summarize") {
     setAiBusy(action);
     try {
@@ -129,6 +134,24 @@ export function Composer({
       } else if (result.summary) setSummary(result.summary);
     } catch (reason) {
       toast.push(errorMessage(reason, "AI assistance is unavailable."), "error");
+    } finally {
+      setAiBusy(null);
+    }
+  }
+
+  async function translateDraft() {
+    const original = body.trim();
+    if (!original) return;
+    setAiBusy("translate");
+    try {
+      const result = await api<{ translation: string }>("/assistant/translate", {
+        method: "POST",
+        body: JSON.stringify({ ticketId, text: original, targetLanguage }),
+      });
+      setOriginalDraft(original);
+      onBodyChange(result.translation, "");
+    } catch (reason) {
+      toast.push(errorMessage(reason, "The draft could not be translated."), "error");
     } finally {
       setAiBusy(null);
     }
@@ -177,7 +200,7 @@ export function Composer({
               type="button"
               disabled={aiBusy !== null}
               onClick={() => void requestAssistant("draft")}
-              title="Sends this conversation to OpenAI to draft a reply"
+              title={`Sends this conversation to ${aiProvider} to draft a reply`}
             >
               <Sparkles size={13} />
               {aiBusy === "draft" ? "Drafting…" : "AI draft"}
@@ -188,10 +211,34 @@ export function Composer({
               type="button"
               disabled={aiBusy !== null}
               onClick={() => void requestAssistant("summarize")}
-              title="Sends this conversation to OpenAI to summarize it"
+              title={`Sends this conversation to ${aiProvider} to summarize it`}
             >
               {aiBusy === "summarize" ? "Summarizing…" : "Summarize"}
             </button>
+          )}
+          {aiEnabled && (
+            <>
+              <select
+                aria-label="Translate draft into"
+                value={targetLanguage}
+                onChange={(event) => setTargetLanguage(event.target.value)}
+              >
+                {translationLanguages.map((language) => (
+                  <option key={language.code} value={language.code}>
+                    {language.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={aiBusy !== null || !body.trim()}
+                onClick={() => void translateDraft()}
+                title={`Sends this draft to ${aiProvider} to translate it`}
+              >
+                <Languages size={13} />
+                {aiBusy === "translate" ? "Translating…" : "Translate"}
+              </button>
+            </>
           )}
         </span>
       </div>
@@ -205,6 +252,27 @@ export function Composer({
             </button>
           </header>
           <p>{summary}</p>
+        </aside>
+      )}
+      {originalDraft && (
+        <aside className="ai-summary" aria-label="Draft before translation">
+          <header>
+            <Languages size={13} />
+            Before translation
+            <button type="button" aria-label="Dismiss original draft" onClick={() => setOriginalDraft(null)}>
+              <X size={12} />
+            </button>
+          </header>
+          <p>{originalDraft}</p>
+          <button
+            type="button"
+            onClick={() => {
+              onBodyChange(originalDraft, "");
+              setOriginalDraft(null);
+            }}
+          >
+            Restore this draft
+          </button>
         </aside>
       )}
       <Suspense fallback={<div className="rich-composer-loading" aria-label="Loading editor" />}>

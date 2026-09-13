@@ -21,6 +21,12 @@ export interface AppBindings {
   SYSTEM_MAIL_FROM?: string;
   /** "enabled" adds a signed plus-address Reply-To to outbound mail; needs an Email Routing catch-all rule. */
   OUTBOUND_REPLY_TOKEN?: string;
+  /** Workers AI binding. When present it is preferred over OPENAI_API_KEY. */
+  AI?: Ai;
+  /** Optional Workers AI text-generation model override. */
+  WORKERS_AI_MODEL?: string;
+  /** Optional AI Gateway id; when set, Workers AI calls are routed through it. */
+  AI_GATEWAY_ID?: string;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   /** Optional retention window in days; resolved and closed tickets older than this are deleted by the cron sweep. */

@@ -1203,3 +1203,31 @@ tr.row-unread .ticket-id {
     height: 72px;
   }
 }
+
+.thread-translate,
+.thread-translation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.thread-translation {
+  flex-direction: column;
+  align-items: flex-start;
+  border-left: 2px solid var(--rule);
+  padding-left: 10px;
+}
+.thread-translate button,
+.thread-translation button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--link);
+  cursor: pointer;
+  font: inherit;
+}
+.thread-translate button[disabled] {
+  cursor: progress;
+  opacity: 0.7;
+}

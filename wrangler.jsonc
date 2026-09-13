@@ -47,6 +47,9 @@
       "migrations_dir": "drizzle/migrations",
     },
   ],
+  "ai": {
+    "binding": "AI",
+  },
   "r2_buckets": [
     {
       "binding": "ATTACHMENTS",
@@ -139,6 +142,9 @@
   },
   "vars": {
     "DEV_MAIL_MODE": "disabled",
+    // Signed plus-address Reply-To on outbound mail. Enable only after adding an Email Routing
+    // catch-all rule for the sending domain, or tagged replies never reach the Worker.
+    // "OUTBOUND_REPLY_TOKEN": "enabled",
   },
   "secrets": {
     "required": ["SESSION_PEPPER"],

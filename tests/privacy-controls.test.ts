@@ -5,7 +5,7 @@ import { request, signup, type TestSession } from "./helpers";
 
 interface SettingsBody {
   mail: { resendConfigured: boolean };
-  ai: { available: boolean; enabled: boolean };
+  ai: { available: boolean; enabled: boolean; provider: string | null };
 }
 
 async function createTicket(session: TestSession, suffix: string) {
@@ -55,9 +55,9 @@ describe("workspace AI opt-in", () => {
 
     const settings = await request("/organization/settings", {}, workspace);
     const body = (await settings.json()) as SettingsBody;
-    // The test Worker has no OPENAI_API_KEY, so the feature stays available=false
+    // The test Worker has neither the AI binding nor OPENAI_API_KEY, so the feature stays available=false
     // even though this workspace opted in.
-    expect(body.ai).toEqual({ available: false, enabled: true });
+    expect(body.ai).toEqual({ available: false, enabled: true, provider: null });
 
     const unconfigured = await request(
       "/assistant/draft",
