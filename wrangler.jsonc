@@ -48,9 +48,12 @@
       "migrations_dir": "drizzle/migrations",
     },
   ],
-  "ai": {
-    "binding": "AI",
-  },
+  // Optional Workers AI (free daily allowance; per-workspace opt-in still gates data flow).
+  // Uncomment to prefer Workers AI over OPENAI_API_KEY. Note: with this binding present,
+  // `wrangler dev` opens a remote proxy for AI and needs `wrangler login` or CLOUDFLARE_API_TOKEN.
+  // "ai": {
+  //   "binding": "AI",
+  // },
   // Optional native outbound email (Cloudflare Email Sending, Workers Paid, beta).
   // Uncomment only after enabling Email Sending on the zone; the Deploy button
   // cannot provision it, and on a Free account an unprovisioned binding fails the

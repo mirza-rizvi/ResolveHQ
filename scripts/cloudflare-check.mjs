@@ -49,8 +49,8 @@ if (emailBinding || emailEventsConsumer) {
   );
 }
 check(
-  config.ai?.binding === "AI",
-  "Workers AI binding configured (OPENAI_API_KEY remains the fallback when it is absent)",
+  !config.ai || config.ai.binding === "AI",
+  config.ai ? "Workers AI binding configured (preferred over OPENAI_API_KEY)" : "Workers AI binding not configured (optional; uncomment `ai` in wrangler.jsonc to enable, or set OPENAI_API_KEY)",
 );
 check(config.triggers?.crons?.length && /scheduled\s*\(/.test(worker), "Cron configured with handler");
 check(/email\s*\(/.test(worker), "Email handler configured (Email Routing rule requires dashboard setup)");
