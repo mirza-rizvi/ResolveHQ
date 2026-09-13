@@ -5,6 +5,9 @@ DEV_MAIL_MODE=disabled
 # RESEND_API_KEY=re_...
 # RESEND_WEBHOOK_SECRET=whsec_...
 # SYSTEM_MAIL_FROM=no-reply@example.com
+# Signed plus-address Reply-To on outbound mail. Needs an Email Routing catch-all
+# rule for the sending domain, otherwise tagged replies never reach the Worker.
+# OUTBOUND_REPLY_TOKEN=enabled
 # APP_URL=https://your-worker.example.com
 # OPENAI_API_KEY=sk-...
 # OPENAI_MODEL=gpt-4o-mini

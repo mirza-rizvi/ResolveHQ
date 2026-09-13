@@ -394,6 +394,42 @@
   color: var(--quiet);
   font-size: 10px;
 }
+.customer-identities {
+  margin-top: 24px;
+}
+.customer-identities h3 {
+  font-size: 12px;
+}
+.customer-identities ul {
+  margin: 8px 0 12px;
+}
+.customer-identities li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px solid var(--rule);
+  font-size: 11px;
+}
+.customer-identities li > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.customer-identities form,
+.customer-merge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+.customer-merge {
+  margin-top: 12px;
+}
+.customer-merge label {
+  flex: 1;
+  min-width: 180px;
+}
 .invite-strip {
   display: grid;
   grid-template-columns: 22px minmax(220px, 1fr) 150px auto;

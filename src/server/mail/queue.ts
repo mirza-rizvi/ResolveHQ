@@ -13,6 +13,8 @@ import {
   tickets,
 } from "../db/schema";
 import { base64Url } from "../lib/crypto";
+import { canonicalizeRecipient, parseReplyTag, replyToken, taggedAddress, verifyReplyToken } from "./address";
+import { createCustomerWithIdentity, findCustomerByIdentities } from "../customers/identities";
 import { newId, normalizeSearch } from "../lib/id";
 import { PostalMimeIncomingProvider } from "../providers/mail";
 import { refreshTicketSearch } from "../search/index";
@@ -134,6 +136,7 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
     const mail = await new PostalMimeIncomingProvider().parse(raw);
     mail.providerMessageId ||= `<${eventId}@resolvehq.invalid>`;
     const recipient = (envelopeTo || mail.to || "").toLowerCase();
+    const { tag } = canonicalizeRecipient(recipient);
     const inbox = await resolveInbox(env.DB, recipient);
     if (!inbox) throw new MailFailure("No ResolveHQ inbox is configured for this delivery.", true, "inbox_missing");
     const organizationId = inbox.organizationId;
@@ -186,29 +189,31 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       .bind(organizationId, mail.providerMessageId)
       .first<ExistingMessage>();
 
-    let customer = await db
+    // Reply-To widens who the thread may belong to, but only From creates or
+    // owns an identity: a forged Reply-To must never mint a customer record.
+    const senderCandidates = [...new Set([mail.from.email, mail.replyTo?.email].filter(Boolean) as string[])].map(
+      (value) => value.toLowerCase(),
+    );
+    const identities = await findCustomerByIdentities(env.DB, organizationId, senderCandidates);
+    let fromCustomerId = identities.find((identity) => identity.value === mail.from.email)?.customerId;
+    if (!fromCustomerId)
+      ({ id: fromCustomerId } = await createCustomerWithIdentity(
+        env.DB,
+        organizationId,
+        {
+          name: mail.from.name || mail.from.email.split("@")[0],
+          email: mail.from.email,
+          lastContactedAt: now.getTime(),
+        },
+        "inbound_from",
+      ));
+    const threadCustomerIds = [...new Set([fromCustomerId, ...identities.map((identity) => identity.customerId)])];
+    const customer = await db
       .select()
       .from(customers)
-      .where(and(eq(customers.organizationId, organizationId), eq(customers.email, mail.from.email)))
+      .where(and(eq(customers.organizationId, organizationId), eq(customers.id, fromCustomerId)))
       .limit(1)
       .then((rows) => rows[0]);
-    if (!customer) {
-      const customerId = newId("cus");
-      await db.insert(customers).values({
-        id: customerId,
-        organizationId,
-        name: mail.from.name || mail.from.email.split("@")[0],
-        email: mail.from.email,
-        normalizedSearch: normalizeSearch(mail.from.name, mail.from.email),
-        lastContactedAt: now,
-      });
-      customer = await db
-        .select()
-        .from(customers)
-        .where(and(eq(customers.organizationId, organizationId), eq(customers.id, customerId)))
-        .limit(1)
-        .then((rows) => rows[0]);
-    }
     if (!customer) throw new Error("Could not resolve inbound customer.");
 
     let ticket: TicketReference | undefined = existing
@@ -221,8 +226,10 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       : undefined;
 
     // A visible ticket number is not an authentication mechanism. Replies attach
-    // through RFC message identifiers first, and the subject number is only a
-    // fallback; both paths must match the same inbox and the same customer.
+    // through RFC message identifiers first, then a signed reply address, and
+    // the guessable subject number only as a last resort. None of the tiers
+    // looks at the delivering inbox, so a customer may answer from any address
+    // of theirs to any of the workspace's inboxes and stay on one thread.
     // Long threads accumulate References oldest-first; cap the identifiers so
     // the statement stays inside D1's bound-parameter limit while keeping the
     // In-Reply-To parent and the most recent ancestors.
@@ -231,23 +238,38 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       uniqueReferences.length > maximumThreadReferences
         ? [...new Set([uniqueReferences[0], ...uniqueReferences.slice(-(maximumThreadReferences - 1))])]
         : uniqueReferences;
+    const customerPlaceholders = threadCustomerIds.map(() => "?").join(",");
     if (!ticket && references.length) {
       const placeholders = references.map(() => "?").join(",");
       ticket =
         (await env.DB.prepare(
-          `SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = t.organization_id WHERE m.organization_id = ? AND t.inbox_id = ? AND c.email = ? AND (m.rfc_message_id IN (${placeholders}) OR m.provider_message_id IN (${placeholders})) ORDER BY m.created_at DESC LIMIT 1`,
+          `SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id WHERE m.organization_id = ? AND t.customer_id IN (${customerPlaceholders}) AND (m.rfc_message_id IN (${placeholders}) OR m.provider_message_id IN (${placeholders})) ORDER BY m.created_at DESC LIMIT 1`,
         )
-          .bind(organizationId, inbox.id, mail.from.email, ...references, ...references)
+          .bind(organizationId, ...threadCustomerIds, ...references, ...references)
           .first<TicketReference>()) ?? undefined;
+    }
+    const replyTag = parseReplyTag(tag);
+    if (!ticket && replyTag) {
+      const candidate = await env.DB.prepare(
+        `SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM tickets t WHERE t.organization_id = ? AND t.number = ? AND t.customer_id IN (${customerPlaceholders}) LIMIT 1`,
+      )
+        .bind(organizationId, replyTag.number, ...threadCustomerIds)
+        .first<TicketReference>();
+      if (
+        candidate &&
+        (await verifyReplyToken(env, organizationId, candidate.id, candidate.number, replyTag.token))
+      )
+        ticket = candidate;
     }
     if (!ticket) {
       const numberMatch = /\[#(\d{1,12})\]/.exec(mail.subject);
       if (numberMatch) {
+        // The guessable tier stays bound to the sending address itself.
         ticket =
           (await env.DB.prepare(
-            "SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM tickets t JOIN customers c ON c.id = t.customer_id AND c.organization_id = t.organization_id WHERE t.organization_id = ? AND t.inbox_id = ? AND t.number = ? AND c.email = ? LIMIT 1",
+            "SELECT t.id, t.number, t.subject, t.customer_id AS customerId FROM tickets t WHERE t.organization_id = ? AND t.number = ? AND t.customer_id = ? LIMIT 1",
           )
-            .bind(organizationId, inbox.id, Number(numberMatch[1]), mail.from.email)
+            .bind(organizationId, Number(numberMatch[1]), fromCustomerId)
             .first<TicketReference>()) ?? undefined;
       }
     }
@@ -540,6 +562,15 @@ export async function processOutboundMail(
           html: row.html,
           messageId: rfcMessageId,
           references: lastCustomer?.ref ? [lastCustomer.ref] : undefined,
+          // Opt-in: the tagged address only reaches the Worker when the domain
+          // has an Email Routing catch-all rule, so it stays behind a flag.
+          replyTo:
+            env.OUTBOUND_REPLY_TOKEN === "enabled"
+              ? taggedAddress(
+                  row.supportEmail,
+                  await replyToken(env, job.organizationId, row.ticketId, row.number),
+                )
+              : undefined,
           attachmentManifest: await buildAttachmentManifest(env, job.organizationId, job.messageId),
         };
     if (job.firstAttemptAt && Date.now() - job.firstAttemptAt >= retryWindowMs)
@@ -645,17 +676,26 @@ interface OutboundRow {
   supportEmail?: string;
 }
 
+/**
+ * Finds the inbox a delivery belongs to. A plus tag is addressing detail, not a
+ * separate mailbox, so the tagged address is tried first and the bare mailbox
+ * second; only the bare mailbox may provision an inbox from `support_email`.
+ */
 export async function resolveInbox(database: D1Database, recipient: string) {
-  const existing = await database
-    .prepare(
-      "SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? AND disabled_at IS NULL LIMIT 1",
-    )
-    .bind(recipient)
-    .first<{ id: string; organizationId: string }>();
-  if (existing) return existing;
+  const { inboxAddress } = canonicalizeRecipient(recipient);
+  const addresses = [...new Set([recipient, inboxAddress])];
+  for (const address of addresses) {
+    const existing = await database
+      .prepare(
+        "SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? AND disabled_at IS NULL LIMIT 1",
+      )
+      .bind(address)
+      .first<{ id: string; organizationId: string }>();
+    if (existing) return existing;
+  }
   const organization = await database
     .prepare("SELECT id AS organizationId FROM organizations WHERE lower(support_email) = ? LIMIT 1")
-    .bind(recipient)
+    .bind(inboxAddress)
     .first<{ organizationId: string }>();
   if (!organization) return null;
   const id = newId("inb");
@@ -667,14 +707,14 @@ export async function resolveInbox(database: D1Database, recipient: string) {
     .prepare(
       "INSERT INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at) VALUES (?, ?, 'Support', ?, 'cloudflare_email', 1, ?, ?) ON CONFLICT DO NOTHING RETURNING id, organization_id AS organizationId",
     )
-    .bind(id, organization.organizationId, recipient, now, now)
+    .bind(id, organization.organizationId, inboxAddress, now, now)
     .first<{ id: string; organizationId: string }>();
   if (inserted) return inserted;
   return database
     .prepare(
       "SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? AND organization_id = ? AND disabled_at IS NULL LIMIT 1",
     )
-    .bind(recipient, organization.organizationId)
+    .bind(inboxAddress, organization.organizationId)
     .first<{ id: string; organizationId: string }>();
 }
 

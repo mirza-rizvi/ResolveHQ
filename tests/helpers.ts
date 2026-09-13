@@ -64,3 +64,31 @@ export function request(path: string, init: RequestInit = {}, session?: TestSess
   }
   return app.request(`http://localhost:8787/api${path}`, { ...init, headers }, env);
 }
+
+/** Minimal RFC 5322 fixture for inbound mail tests. */
+export function mimeMessage(input: {
+  id: string;
+  to: string;
+  subject: string;
+  body: string;
+  inReplyTo?: string;
+  references?: string;
+  from?: string;
+  replyTo?: string;
+}) {
+  return new TextEncoder().encode(
+    [
+      `From: ${input.from ?? "Casey Customer <customer@example.test>"}`,
+      `To: ${input.to}`,
+      ...(input.replyTo ? [`Reply-To: ${input.replyTo}`] : []),
+      `Subject: ${input.subject}`,
+      `Message-ID: ${input.id}`,
+      ...(input.inReplyTo ? [`In-Reply-To: ${input.inReplyTo}`] : []),
+      ...(input.references ? [`References: ${input.references}`] : []),
+      "MIME-Version: 1.0",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      input.body,
+    ].join("\r\n"),
+  ).buffer as ArrayBuffer;
+}

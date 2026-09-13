@@ -152,6 +152,38 @@ export const customers = sqliteTable(
   ],
 );
 
+/**
+ * Every address a customer writes from. `customers.email` stays as the
+ * denormalized primary; threading and search read the identity rows so a
+ * customer who switches address keeps one history.
+ */
+export const customerIdentities = sqliteTable(
+  "customer_identities",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull().default("email"),
+    value: text("value").notNull(),
+    isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
+    source: text("source", { enum: ["backfill", "inbound_from", "manual", "merge"] })
+      .notNull()
+      .default("backfill"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("customer_identities_org_value_uidx").on(table.organizationId, table.kind, table.value),
+    index("customer_identities_customer_idx").on(table.organizationId, table.customerId),
+    uniqueIndex("customer_identities_primary_uidx")
+      .on(table.customerId)
+      .where(sql`${table.isPrimary} = 1`),
+  ],
+);
+
 export const tickets = sqliteTable(
   "tickets",
   {

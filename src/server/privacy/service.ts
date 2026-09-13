@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { createDb } from "../db";
 import { attachments, customers, messages, tickets } from "../db/schema";
+import { listIdentities } from "../customers/identities";
 
 const terminalEraseUpdate = (table: "inbound_mail_events" | "outbound_mail_jobs", where: string) =>
   `UPDATE ${table} SET status = 'failed', terminal_reason = 'customer_erased', lease_until = 0, dispatch_until = 0 WHERE ${where}`;
@@ -102,20 +103,29 @@ export async function processCustomerErasure(
   if (ticketIds.length === 5) return 5;
 
   // Remaining guard: a staged inbound email from this customer must not create
-  // a fresh conversation from erased content.
-  await env.DB.prepare(
-    terminalEraseUpdate(
-      "inbound_mail_events",
-      `organization_id = ? AND status IN ('staged','processing') AND lower(coalesce(envelope_from, '')) = ?`,
-    ),
-  )
-    .bind(organizationId, customer.email.toLowerCase())
-    .run();
-  await env.DB.prepare(
-    "DELETE FROM mail_captures WHERE organization_id = ? AND (lower(to_address) = ? OR lower(from_address) = ?)",
-  )
-    .bind(organizationId, customer.email.toLowerCase(), customer.email.toLowerCase())
-    .run();
+  // a fresh conversation from erased content. Every address they ever wrote
+  // from counts, not just the primary one.
+  const addresses = [
+    ...new Set([
+      customer.email.toLowerCase(),
+      ...(await listIdentities(env.DB, organizationId, customerId)).map((identity) => identity.value),
+    ]),
+  ];
+  for (const address of addresses) {
+    await env.DB.prepare(
+      terminalEraseUpdate(
+        "inbound_mail_events",
+        `organization_id = ? AND status IN ('staged','processing') AND lower(coalesce(envelope_from, '')) = ?`,
+      ),
+    )
+      .bind(organizationId, address)
+      .run();
+    await env.DB.prepare(
+      "DELETE FROM mail_captures WHERE organization_id = ? AND (lower(to_address) = ? OR lower(from_address) = ?)",
+    )
+      .bind(organizationId, address, address)
+      .run();
+  }
   await env.DB.prepare("DELETE FROM customers WHERE organization_id = ? AND id = ?")
     .bind(organizationId, customerId)
     .run();
@@ -131,6 +141,7 @@ export async function collectCustomerExport(database: D1Database, organizationId
     .where(and(eq(customers.id, customerId), eq(customers.organizationId, organizationId)))
     .limit(1);
   if (!customer) return null;
+  const identities = await listIdentities(database, organizationId, customerId);
   const ticketRows = await db
     .select({
       id: tickets.id,
@@ -184,6 +195,12 @@ export async function collectCustomerExport(database: D1Database, organizationId
       createdAt: customer.createdAt,
       lastContactedAt: customer.lastContactedAt,
     },
+    identities: identities.map((identity) => ({
+      value: identity.value,
+      isPrimary: identity.isPrimary,
+      source: identity.source,
+      createdAt: identity.createdAt,
+    })),
     tickets: ticketRows.map((ticket) => ({
       ...ticket,
       messages: messageRows

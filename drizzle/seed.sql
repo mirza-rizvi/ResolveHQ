@@ -20,6 +20,12 @@ VALUES
   ('cus_omar', 'org_demo', 'Omar Haddad', 'omar@relaycart.test', 'RelayCart', NULL, NULL, 'omar haddad omar@relaycart.test relaycart', 1788269400000, 1787100000000, 1788269400000),
   ('cus_sophie', 'org_demo', 'Sophie Laurent', 'sophie@acorn.test', 'Acorn Commerce', NULL, 'VIP annual customer.', 'sophie laurent sophie@acorn.test acorn commerce', 1788180000000, 1787200000000, 1788180000000);
 
+INSERT OR IGNORE INTO customer_identities (id, organization_id, customer_id, kind, value, is_primary, source, created_at, updated_at)
+VALUES
+  ('cid_lina', 'org_demo', 'cus_lina', 'email', 'lina@papertrail.test', 1, 'backfill', 1787000000000, 1787000000000),
+  ('cid_omar', 'org_demo', 'cus_omar', 'email', 'omar@relaycart.test', 1, 'backfill', 1787100000000, 1787100000000),
+  ('cid_sophie', 'org_demo', 'cus_sophie', 'email', 'sophie@acorn.test', 1, 'backfill', 1787200000000, 1787200000000);
+
 INSERT OR IGNORE INTO tickets (id, organization_id, inbox_id, number, customer_id, subject, status, priority, assigned_user_id, normalized_search, last_message_preview, message_count, last_customer_reply_at, last_agent_reply_at, last_reply_at, created_at, updated_at)
 VALUES
   ('tkt_1001', 'org_demo', 'inb_demo', 1001, 'cus_lina', 'Webhook deliveries retrying indefinitely', 'open', 'high', 'usr_agent', '1001 webhook deliveries retrying indefinitely lina park lina@papertrail.test', 'Thanks for flagging this, Lina. I have paused retries for the affected endpoint.', 3, 1788264000000, 1788275700000, 1788275700000, 1788264000000, 1788275700000),

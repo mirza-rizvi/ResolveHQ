@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Building2, Download, Mail, Plus, Search, ShieldAlert, TicketCheck, X } from "lucide-react";
+import { Building2, Download, Mail, Merge, Plus, Search, ShieldAlert, TicketCheck, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useAuth } from "@/web/auth";
@@ -16,8 +16,15 @@ interface Customer {
   ticketCount: number;
   lastContactedAt: string | null;
 }
+interface Identity {
+  id: string;
+  value: string;
+  isPrimary: boolean;
+  source: string;
+}
 interface CustomerDetail {
   customer: Customer & { notes: string | null; createdAt: string };
+  identities: Identity[];
   tickets: Array<{ id: string; number: number; subject: string; status: string; priority: string; updatedAt: string }>;
 }
 
@@ -29,6 +36,12 @@ export function CustomersPage() {
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [confirmingErasure, setConfirmingErasure] = useState<Customer | null>(null);
+  const [identityError, setIdentityError] = useState("");
+  const [mergeQuery, setMergeQuery] = useState("");
+  const [mergeMatches, setMergeMatches] = useState<Customer[]>([]);
+  const [confirmingMerge, setConfirmingMerge] = useState<{ source: CustomerDetail["customer"]; target: Customer } | null>(
+    null,
+  );
   const canManageData = session?.role === "owner" || session?.role === "admin";
 
   const customersQuery = useInfiniteQuery({
@@ -65,10 +78,90 @@ export function CustomersPage() {
     }
   }
   async function openCustomer(id: string) {
+    setIdentityError("");
+    setMergeQuery("");
+    setMergeMatches([]);
     try {
       setDetail(await api<CustomerDetail>(`/customers/${id}`));
     } catch (reason) {
       toast.push(errorMessage(reason, "Could not open customer history."), "error");
+    }
+  }
+  async function addIdentity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!detail) return;
+    setIdentityError("");
+    const form = event.currentTarget;
+    const email = String(new FormData(form).get("identityEmail"));
+    try {
+      const { identities } = await api<{ identities: Identity[] }>(`/customers/${detail.customer.id}/identities`, {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      form.reset();
+      setDetail({ ...detail, identities });
+    } catch (reason) {
+      // A taken address is not a dead end: the owner is named so the two
+      // records can be merged instead.
+      if (reason instanceof ApiError && reason.code === "identity_in_use") {
+        const ownerId = String(reason.details.ownerCustomerId ?? "");
+        setIdentityError(`${email} already belongs to another customer.`);
+        if (ownerId && canManageData) await offerMerge(ownerId);
+        return;
+      }
+      setIdentityError(errorMessage(reason, "That address could not be added."));
+    }
+  }
+  async function removeIdentity(identity: Identity) {
+    if (!detail) return;
+    setIdentityError("");
+    try {
+      const { identities } = await api<{ identities: Identity[] }>(
+        `/customers/${detail.customer.id}/identities/${identity.id}`,
+        { method: "DELETE" },
+      );
+      setDetail({ ...detail, identities });
+    } catch (reason) {
+      setIdentityError(errorMessage(reason, "That address could not be removed."));
+    }
+  }
+  async function offerMerge(ownerCustomerId: string) {
+    if (!detail) return;
+    try {
+      const owner = await api<CustomerDetail>(`/customers/${ownerCustomerId}`);
+      setConfirmingMerge({ source: detail.customer, target: owner.customer });
+    } catch {
+      setIdentityError("That address belongs to another customer in this workspace.");
+    }
+  }
+  async function searchMergeTargets(value: string) {
+    setMergeQuery(value);
+    if (!detail || value.trim().length < 2) return setMergeMatches([]);
+    try {
+      const { customers: found } = await api<{ customers: Customer[] }>(
+        `/customers?q=${encodeURIComponent(value.trim())}`,
+      );
+      setMergeMatches(found.filter((row) => row.id !== detail.customer.id).slice(0, 5));
+    } catch {
+      setMergeMatches([]);
+    }
+  }
+  async function mergeCustomer() {
+    if (!confirmingMerge) return;
+    const { source, target } = confirmingMerge;
+    setConfirmingMerge(null);
+    try {
+      await api(`/customers/${target.id}/merge`, {
+        method: "POST",
+        body: JSON.stringify({ sourceCustomerId: source.id }),
+      });
+      toast.push(`${source.name} was merged into ${target.name}.`, "success");
+      setMergeQuery("");
+      setMergeMatches([]);
+      await openCustomer(target.id);
+      await customersQuery.refetch();
+    } catch (reason) {
+      toast.push(errorMessage(reason, "The merge could not be completed."), "error");
     }
   }
   async function saveNotes(event: FormEvent<HTMLFormElement>) {
@@ -265,6 +358,61 @@ export function CustomersPage() {
             ))}
             {!detail.tickets.length && <li>No conversations yet.</li>}
           </ul>
+          <section className="customer-identities" aria-label="Email addresses">
+            <h3>Email addresses</h3>
+            <ul>
+              {detail.identities.map((identity) => (
+                <li key={identity.id}>
+                  <Mail size={13} />
+                  <span>{identity.value}</span>
+                  {identity.isPrimary ? (
+                    <span className="badge badge-blue">Primary</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="member-access-button"
+                      aria-label={`Remove ${identity.value}`}
+                      onClick={() => void removeIdentity(identity)}
+                    >
+                      <X size={12} />
+                      Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <form onSubmit={addIdentity}>
+              <Input name="identityEmail" type="email" placeholder="another@address.com" required />
+              <Button type="submit" size="small" variant="secondary">
+                Add address
+              </Button>
+            </form>
+            {identityError && <p className="form-error">{identityError}</p>}
+            {canManageData && (
+              <div className="customer-merge">
+                <label>
+                  Merge into…
+                  <Input
+                    value={mergeQuery}
+                    onChange={(event) => void searchMergeTargets(event.target.value)}
+                    placeholder="Search the customer to keep"
+                    aria-label="Search the customer to merge into"
+                  />
+                </label>
+                {mergeMatches.map((match) => (
+                  <button
+                    key={match.id}
+                    type="button"
+                    className="member-access-button"
+                    onClick={() => setConfirmingMerge({ source: detail.customer, target: match })}
+                  >
+                    <Merge size={12} />
+                    {match.name} · {match.email}
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
           <form onSubmit={saveNotes}>
             <label>
               Notes
@@ -275,6 +423,28 @@ export function CustomersPage() {
             </Button>
           </form>
         </section>
+      )}
+      {confirmingMerge && (
+        <div className="command-backdrop" role="presentation">
+          <div className="erasure-dialog" role="alertdialog" aria-modal="true" aria-labelledby="merge-title">
+            <h2 id="merge-title">
+              Merge {confirmingMerge.source.name} into {confirmingMerge.target.name}?
+            </h2>
+            <p>
+              Every ticket, message, tag and email address of {confirmingMerge.source.name} moves to{" "}
+              {confirmingMerge.target.name}, and the {confirmingMerge.source.name} profile is deleted. This cannot be
+              undone.
+            </p>
+            <div className="erasure-actions">
+              <Button variant="secondary" size="small" onClick={() => setConfirmingMerge(null)}>
+                Cancel
+              </Button>
+              <Button variant="danger" size="small" onClick={() => void mergeCustomer()}>
+                Merge customers
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
       {confirmingErasure && (
         <div className="command-backdrop" role="presentation">

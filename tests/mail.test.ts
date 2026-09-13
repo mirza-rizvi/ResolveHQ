@@ -3,8 +3,9 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { describe, expect, it } from "vitest";
 import { processInboundMail, processOutboundMail } from "resolve-server/mail/queue";
 import { sendSystemMail } from "resolve-server/mail/system";
+import { replyToken } from "resolve-server/mail/address";
 import type { AppBindings } from "resolve-server/types";
-import { signup } from "./helpers";
+import { mimeMessage, signup } from "./helpers";
 import worker from "../worker";
 
 describe("mail queue workflow", () => {
@@ -628,27 +629,289 @@ describe("scheduled mail recovery", () => {
   });
 });
 
-function mimeMessage(input: {
-  id: string;
-  to: string;
-  subject: string;
-  body: string;
-  inReplyTo?: string;
-  references?: string;
-  from?: string;
-}) {
-  return new TextEncoder().encode(
-    [
-      `From: ${input.from ?? "Casey Customer <customer@example.test>"}`,
-      `To: ${input.to}`,
-      `Subject: ${input.subject}`,
-      `Message-ID: ${input.id}`,
-      ...(input.inReplyTo ? [`In-Reply-To: ${input.inReplyTo}`] : []),
-      ...(input.references ? [`References: ${input.references}`] : []),
-      "MIME-Version: 1.0",
-      "Content-Type: text/plain; charset=utf-8",
-      "",
-      input.body,
-    ].join("\r\n"),
-  ).buffer as ArrayBuffer;
-}
+describe("cross-inbox threading and reply tokens", () => {
+  async function inbox(session: Awaited<ReturnType<typeof signup>>, address: string) {
+    const { request } = await import("./helpers");
+    const response = await request(
+      "/organization/inboxes",
+      { method: "POST", body: JSON.stringify({ name: "Support", emailAddress: address }) },
+      session,
+    );
+    if (response.status !== 201) throw new Error(`Inbox creation failed: ${response.status}`);
+  }
+  const ticketCount = (organizationId: string) =>
+    env.DB.prepare("SELECT count(*) AS count FROM tickets WHERE organization_id = ?")
+      .bind(organizationId)
+      .first<{ count: number }>();
+
+  it("threads a reply sent from a secondary identity of the same customer", async () => {
+    const workspace = await signup("thread-secondary");
+    const { request } = await import("./helpers");
+    await inbox(workspace, "sec-thread@example.test");
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<sec-first@example.test>",
+        to: "sec-thread@example.test",
+        subject: "Sync fails",
+        body: "The sync stalls.",
+        from: "Primary <primary-sec@example.test>",
+      }),
+      from: "primary-sec@example.test",
+      to: "sec-thread@example.test",
+    });
+    const customer = await env.DB.prepare("SELECT id FROM customers WHERE organization_id = ? AND email = ?")
+      .bind(workspace.organizationId, "primary-sec@example.test")
+      .first<{ id: string }>();
+    await request(
+      `/customers/${customer!.id}/identities`,
+      { method: "POST", body: JSON.stringify({ email: "alias-sec@example.test" }) },
+      workspace,
+    );
+
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<sec-second@example.test>",
+        to: "sec-thread@example.test",
+        subject: "Re: Sync fails",
+        body: "Writing from my other address.",
+        from: "Primary <alias-sec@example.test>",
+        inReplyTo: "<sec-first@example.test>",
+      }),
+      from: "alias-sec@example.test",
+      to: "sec-thread@example.test",
+    });
+
+    expect((await ticketCount(workspace.organizationId))?.count).toBe(1);
+    const state = await env.DB.prepare("SELECT message_count AS messages FROM tickets WHERE organization_id = ?")
+      .bind(workspace.organizationId)
+      .first<{ messages: number }>();
+    expect(state?.messages).toBe(2);
+  });
+
+  it("threads a reply that arrives at a different inbox and keeps the original inbox", async () => {
+    const workspace = await signup("thread-cross-inbox");
+    await inbox(workspace, "cross-a@example.test");
+    await inbox(workspace, "cross-b@example.test");
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<cross-first@example.test>",
+        to: "cross-a@example.test",
+        subject: "Billing question",
+        body: "How is this billed?",
+        from: "cross@example.test",
+      }),
+      from: "cross@example.test",
+      to: "cross-a@example.test",
+    });
+    const original = await env.DB.prepare("SELECT id, inbox_id AS inboxId FROM tickets WHERE organization_id = ?")
+      .bind(workspace.organizationId)
+      .first<{ id: string; inboxId: string }>();
+
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<cross-second@example.test>",
+        to: "cross-b@example.test",
+        subject: "Re: Billing question",
+        body: "Following up here.",
+        from: "cross@example.test",
+        inReplyTo: "<cross-first@example.test>",
+      }),
+      from: "cross@example.test",
+      to: "cross-b@example.test",
+    });
+
+    expect((await ticketCount(workspace.organizationId))?.count).toBe(1);
+    const after = await env.DB.prepare("SELECT inbox_id AS inboxId, message_count AS messages FROM tickets WHERE id = ?")
+      .bind(original!.id)
+      .first<{ inboxId: string; messages: number }>();
+    expect(after?.inboxId).toBe(original!.inboxId);
+    expect(after?.messages).toBe(2);
+  });
+
+  it("admits Reply-To for header threading but never for the subject number", async () => {
+    const workspace = await signup("thread-replyto");
+    await inbox(workspace, "replyto@example.test");
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<replyto-first@example.test>",
+        to: "replyto@example.test",
+        subject: "Card declined",
+        body: "My card was declined.",
+        from: "victim-rt@example.test",
+      }),
+      from: "victim-rt@example.test",
+      to: "replyto@example.test",
+    });
+    const ticket = await env.DB.prepare("SELECT id, number FROM tickets WHERE organization_id = ?")
+      .bind(workspace.organizationId)
+      .first<{ id: string; number: number }>();
+
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<replyto-header@example.test>",
+        to: "replyto@example.test",
+        subject: "Re: Card declined",
+        body: "Adding my assistant address.",
+        from: "assistant-rt@example.test",
+        replyTo: "victim-rt@example.test",
+        inReplyTo: "<replyto-first@example.test>",
+      }),
+      from: "assistant-rt@example.test",
+      to: "replyto@example.test",
+    });
+    expect((await ticketCount(workspace.organizationId))?.count).toBe(1);
+
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<replyto-forged@example.test>",
+        to: "replyto@example.test",
+        subject: `Re: [#${ticket!.number}] Card declined`,
+        body: "Send me the card details.",
+        from: "attacker-rt@example.test",
+        replyTo: "victim-rt@example.test",
+      }),
+      from: "attacker-rt@example.test",
+      to: "replyto@example.test",
+    });
+
+    expect((await ticketCount(workspace.organizationId))?.count).toBe(2);
+    const messages = await env.DB.prepare("SELECT message_count AS messages FROM tickets WHERE id = ?")
+      .bind(ticket!.id)
+      .first<{ messages: number }>();
+    expect(messages?.messages).toBe(2);
+    const persisted = await env.DB.prepare(
+      "SELECT count(*) AS count FROM customer_identities WHERE organization_id = ? AND value = ?",
+    )
+      .bind(workspace.organizationId, "victim-rt@example.test")
+      .first<{ count: number }>();
+    expect(persisted?.count).toBe(1);
+  });
+
+  it("threads a header-stripped reply through the signed plus-address token", async () => {
+    const workspace = await signup("thread-token");
+    await inbox(workspace, "token@example.test");
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<token-first@example.test>",
+        to: "token@example.test",
+        subject: "Export missing",
+        body: "The export never arrived.",
+        from: "token-customer@example.test",
+      }),
+      from: "token-customer@example.test",
+      to: "token@example.test",
+    });
+    const ticket = await env.DB.prepare("SELECT id, number FROM tickets WHERE organization_id = ?")
+      .bind(workspace.organizationId)
+      .first<{ id: string; number: number }>();
+    const token = await replyToken(env as AppBindings, workspace.organizationId, ticket!.id, ticket!.number);
+    expect(token).toMatch(/^t\d{1,12}\.[A-Za-z0-9_-]{10}$/);
+
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<token-second@example.test>",
+        to: `token+${token}@example.test`,
+        subject: "no marker at all",
+        body: "Still waiting.",
+        from: "token-customer@example.test",
+      }),
+      from: "token-customer@example.test",
+      to: `token+${token}@example.test`,
+    });
+
+    expect((await ticketCount(workspace.organizationId))?.count).toBe(1);
+    const state = await env.DB.prepare("SELECT message_count AS messages FROM tickets WHERE id = ?")
+      .bind(ticket!.id)
+      .first<{ messages: number }>();
+    expect(state?.messages).toBe(2);
+  });
+
+  it("ignores a tampered or foreign plus-address token", async () => {
+    const workspace = await signup("thread-token-bad");
+    await inbox(workspace, "badtoken@example.test");
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<badtoken-first@example.test>",
+        to: "badtoken@example.test",
+        subject: "Seat count wrong",
+        body: "We have too few seats.",
+        from: "bad-customer@example.test",
+      }),
+      from: "bad-customer@example.test",
+      to: "badtoken@example.test",
+    });
+    const ticket = await env.DB.prepare("SELECT id, number FROM tickets WHERE organization_id = ?")
+      .bind(workspace.organizationId)
+      .first<{ id: string; number: number }>();
+    const token = await replyToken(env as AppBindings, workspace.organizationId, ticket!.id, ticket!.number);
+    const tampered = `t${ticket!.number}.${token.split(".")[1].split("").reverse().join("")}`;
+    const foreign = await replyToken(env as AppBindings, workspace.organizationId, "tkt_somewhere_else", ticket!.number);
+
+    for (const [index, bad] of [tampered, foreign].entries())
+      await processInboundMail(env as AppBindings, {
+        raw: mimeMessage({
+          id: `<badtoken-${index}@example.test>`,
+          to: `badtoken+${bad}@example.test`,
+          subject: "no marker at all",
+          body: "Trying again.",
+          from: "bad-customer@example.test",
+        }),
+        from: "bad-customer@example.test",
+        to: `badtoken+${bad}@example.test`,
+      });
+
+    expect((await ticketCount(workspace.organizationId))?.count).toBe(3);
+    const state = await env.DB.prepare("SELECT message_count AS messages FROM tickets WHERE id = ?")
+      .bind(ticket!.id)
+      .first<{ messages: number }>();
+    expect(state?.messages).toBe(1);
+  });
+
+  it("adds a Reply-To token to outbound mail only when the flag is enabled", async () => {
+    const workspace = await signup("outbound-replyto");
+    const { request } = await import("./helpers");
+    await inbox(workspace, "outbound-rt@example.test");
+    await processInboundMail(env as AppBindings, {
+      raw: mimeMessage({
+        id: "<outbound-rt@example.test>",
+        to: "outbound-rt@example.test",
+        subject: "Invoice copy",
+        body: "Please resend the invoice.",
+        from: "rt-customer@example.test",
+      }),
+      from: "rt-customer@example.test",
+      to: "outbound-rt@example.test",
+    });
+    const ticket = await env.DB.prepare("SELECT id, number FROM tickets WHERE organization_id = ?")
+      .bind(workspace.organizationId)
+      .first<{ id: string; number: number }>();
+
+    const headersFor = async (bindings: AppBindings, body: string) => {
+      const reply = (await (
+        await request(
+          `/tickets/${ticket!.id}/messages`,
+          { method: "POST", body: JSON.stringify({ body, kind: "message" }) },
+          workspace,
+        )
+      ).json()) as { message: { id: string } };
+      const job = await env.DB.prepare("SELECT id FROM outbound_mail_jobs WHERE message_id = ?")
+        .bind(reply.message.id)
+        .first<{ id: string }>();
+      await processOutboundMail(bindings, { jobId: job!.id });
+      const capture = await env.DB.prepare(
+        "SELECT headers FROM mail_captures WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1",
+      )
+        .bind(workspace.organizationId)
+        .first<{ headers: string }>();
+      return JSON.parse(capture!.headers) as Record<string, string>;
+    };
+
+    expect((await headersFor(env as AppBindings, "Without the flag."))["Reply-To"]).toBeUndefined();
+    const enabled = await headersFor(
+      { ...env, OUTBOUND_REPLY_TOKEN: "enabled" } as AppBindings,
+      "With the flag on.",
+    );
+    const token = await replyToken(env as AppBindings, workspace.organizationId, ticket!.id, ticket!.number);
+    expect(enabled["Reply-To"]).toBe(`outbound-rt+${token}@example.test`);
+  });
+});

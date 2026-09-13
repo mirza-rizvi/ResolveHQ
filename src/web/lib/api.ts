@@ -1,5 +1,6 @@
 export interface ApiErrorBody {
-  error?: { code?: string; message?: string; requestId?: string };
+  /** Errors may carry extra machine-readable fields, such as the owner of a conflicting identity. */
+  error?: { code?: string; message?: string; requestId?: string } & Record<string, unknown>;
 }
 
 export class ApiError extends Error {
@@ -7,6 +8,7 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "ApiError";
@@ -36,7 +38,12 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const code = body.error?.code ?? "request_failed";
     if (response.status === 401 && code === "unauthenticated" && !silent401.some((prefix) => path.startsWith(prefix)))
       window.dispatchEvent(new CustomEvent("resolvehq:unauthenticated"));
-    throw new ApiError(response.status, code, body.error?.message ?? "The request could not be completed.");
+    throw new ApiError(
+      response.status,
+      code,
+      body.error?.message ?? "The request could not be completed.",
+      body.error ?? {},
+    );
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

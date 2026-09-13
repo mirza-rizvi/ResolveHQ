@@ -43,11 +43,28 @@ Cron ───────────> outbox reconciliation, expired sessions/
 
 `StorageProvider` exposes validated object put/get/delete operations. The Cloudflare implementation uses R2; a future S3-compatible implementation can replace it without changing ticket services.
 
-`IncomingMailProvider` normalizes raw MIME into an inbound support message. The email handler records the envelope recipient and a durable staging reservation, then streams RFC822 to a randomized R2 staging key; Queues receive only the event ID and object key. The consumer resolves a globally unique inbox, de-duplicates provider message IDs, checkpoints attachment progress, and only links replies when `In-Reply-To` matches the same inbox and customer. Visible ticket numbers are never trusted for threading. `OutgoingMailProvider` sends a reply envelope and returns a provider message ID. The production Resend adapter uses deterministic idempotency keys; signed webhooks are replay-protected by `svix-id`.
+`IncomingMailProvider` normalizes raw MIME into an inbound support message. The email handler records the envelope recipient and a durable staging reservation, then streams RFC822 to a randomized R2 staging key; Queues receive only the event ID and object key. The consumer resolves a globally unique inbox, de-duplicates provider message IDs, checkpoints attachment progress, and links replies to a ticket the sending customer already owns. Visible ticket numbers are never trusted for threading. `OutgoingMailProvider` sends a reply envelope and returns a provider message ID. The production Resend adapter uses deterministic idempotency keys; signed webhooks are replay-protected by `svix-id`.
 
 ### Threading
 
-Every message carries two identifiers: `provider_message_id` (the outgoing mail provider's id, or the inbound `Message-ID` as received) and `rfc_message_id` (an RFC 5322 Message-ID, unique per organization). Sending a reply mints `<${messageId}@${inboxDomain}>`, stores it as `rfc_message_id`, and sends it as the `Message-ID` header, with `In-Reply-To`/`References` set to the ticket's most recent customer message. An inbound reply is matched to an existing ticket by checking its `In-Reply-To`/`References` candidates against `rfc_message_id` OR `provider_message_id` within the resolved inbox's organization, requiring the ticket's customer email to equal the sender. When no header match exists, a `[#<number>]` token in the subject is used as a fallback, again gated on the sender email matching the ticket's customer — a forged subject from a different sender opens a new ticket rather than attaching to someone else's.
+Every message carries two identifiers: `provider_message_id` (the outgoing mail provider's id, or the inbound `Message-ID` as received) and `rfc_message_id` (an RFC 5322 Message-ID, unique per organization). Sending a reply mints `<${messageId}@${inboxDomain}>`, stores it as `rfc_message_id`, and sends it as the `Message-ID` header, with `In-Reply-To`/`References` set to the ticket's most recent customer message.
+
+**Identity scope.** A customer is a set of addresses, not one address: `customer_identities` holds every address the workspace knows for them, with exactly one primary (mirrored in `customers.email`). An inbound message contributes two candidate addresses — `From` and `Reply-To` — and the identity rows for those candidates name the customers a reply may attach to. Only `From` can create an identity (`source = 'inbound_from'`); a `Reply-To` is never persisted, because anyone can put anyone's address in that header.
+
+**Delivering inbox.** No tier filters on `tickets.inbox_id`. A workspace with `support@` and `billing@` threads a reply that arrives at either one onto the same conversation. A matched ticket keeps the inbox it was created with, so the outbound `From` never changes mid-thread; only a new ticket records the inbox that delivered it.
+
+Tiers, in order, all scoped to the resolved inbox's organization:
+
+1. **Same `provider_message_id`** — the duplicate detector. Sender-agnostic, org-wide.
+2. **`References` / `In-Reply-To`** matched against `rfc_message_id` or `provider_message_id`, restricted to tickets owned by one of the candidate customers. Knowing an RFC Message-ID is the secret here, so `Reply-To` is admitted.
+3. **Signed reply address** — the plus tag on the envelope recipient, `t<number>.<signature>`, verified against the ticket it names before it is accepted (see below). Restricted to the candidate customers; runs before the subject tier so a header-stripping mail client still threads.
+4. **Subject `[#<number>]`** — guessable, so it is restricted to the ticket customer of the `From` address alone. A forged subject from a different sender, or a forged `Reply-To`, opens a new ticket rather than attaching to someone else's.
+
+**Reply token format.** `t<ticket number>.<first 10 characters of base64url(HMAC-SHA256(SESSION_PEPPER, "reply-token:" + organizationId + ":" + ticketId)), lower-cased>`; verification is constant-time. The signature is lower-cased because a delivery address is normalized to lower case before the tag is read. A tampered or foreign token is ignored, and the message falls through to the remaining tiers.
+
+**Plus addressing.** `canonicalizeRecipient` splits a recipient at the first `+` of the local part: `support+t1002.ab12cd34ef@acme.test` is a delivery for the `support@acme.test` inbox carrying the tag `t1002.ab12cd34ef`. Inbox resolution tries the address as delivered first and the bare mailbox second; only the bare mailbox may auto-provision an inbox from an organization's `support_email`, and that provisioning only ever returns an inbox the claiming workspace owns. The raw recipient is still stored in `inbound_mail_events.envelope_to`.
+
+**Outbound `Reply-To` is opt-in.** With `OUTBOUND_REPLY_TOKEN = "enabled"`, the frozen outbound envelope gets `Reply-To: <local>+<token>@<domain>`. It is off by default because Cloudflare Email Routing matches custom addresses exactly: the tagged address only reaches the Worker if the sending domain has a catch-all rule pointing at it. Enable the flag only after adding that rule.
 
 ### Cron recovery
 
@@ -59,7 +76,7 @@ The `OpenAIProvider` implementation activates when `OPENAI_API_KEY` is configure
 
 ### Erasure
 
-Customer erasure reuses the durable maintenance task queue: each invocation deletes five tickets (cancelling in-flight outbound jobs and terminalizing matching inbound events first), removes attachment bytes from R2, and finishes by deleting the customer profile and any captured dev mail. A lost invocation resumes from the task row; an interrupted one never leaves mail jobs alive behind deleted content.
+Customer erasure reuses the durable maintenance task queue: each invocation deletes five tickets (cancelling in-flight outbound jobs and terminalizing matching inbound events first), removes attachment bytes from R2, and finishes by deleting the customer profile and any captured dev mail. The final pass loops over every identity the customer holds, not just the primary address, so staged mail from a secondary address cannot revive the conversation. A customer merge is blocked while an erasure task for either side is outstanding. A lost invocation resumes from the task row; an interrupted one never leaves mail jobs alive behind deleted content.
 
 ## Multi-tenancy
 

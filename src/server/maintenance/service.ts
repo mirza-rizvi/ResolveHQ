@@ -58,6 +58,14 @@ export async function processMaintenance(env: AppBindings, taskId: string, messa
         .bind(task.organizationId, task.customerId, cursor ?? "")
         .all<{ id: string }>();
       for (const row of rows.results) {
+        // The ticket's own search text caches the customer name and address, so
+        // a rename, an email change or a merge has to rewrite it before the
+        // full-text row is rebuilt from it.
+        await env.DB.prepare(
+          "UPDATE tickets SET normalized_search = (SELECT lower(tickets.number || ' ' || tickets.subject || ' ' || c.name || ' ' || c.email) FROM customers c WHERE c.id = tickets.customer_id AND c.organization_id = tickets.organization_id) WHERE organization_id = ? AND id = ?",
+        )
+          .bind(task.organizationId, row.id)
+          .run();
         await refreshTicketSearch(env.DB, task.organizationId, row.id);
         cursor = row.id;
         count++;

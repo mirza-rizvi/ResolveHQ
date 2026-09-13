@@ -2,6 +2,8 @@ import { MailFailure } from "../mail/reliability";
 export interface IncomingMail {
   providerMessageId: string;
   from: { name?: string; email: string };
+  /** Reply-To is admitted for header threading only; it is never persisted as an identity. */
+  replyTo?: { name?: string; email: string };
   to: string;
   subject: string;
   text: string;
@@ -27,6 +29,8 @@ export interface OutgoingMail {
   html?: string;
   messageId?: string;
   references?: string[];
+  /** Tagged address replies should reach; set only when reply tokens are enabled. */
+  replyTo?: string;
   /** Frozen manifest of linked attachments; bytes resolve from storage on every attempt. */
   attachmentManifest?: OutgoingAttachment[];
   attachments?: Array<{ filename: string; contentType: string; content: string }>;
@@ -52,6 +56,7 @@ export class DevelopmentMailProvider implements OutgoingMailProvider {
       : `dev_${crypto.randomUUID()}`;
     const headers = {
       ...(message.messageId ? { "Message-ID": message.messageId } : {}),
+      ...(message.replyTo ? { "Reply-To": message.replyTo } : {}),
       ...(message.references?.length
         ? { "In-Reply-To": message.references.at(-1)!, References: message.references.join(" ") }
         : {}),
@@ -103,6 +108,7 @@ export class ResendMailProvider implements OutgoingMailProvider {
             }
           : {}),
         ...(message.html ? { html: message.html } : {}),
+        ...(message.replyTo ? { reply_to: message.replyTo } : {}),
         ...(message.messageId || message.references?.length
           ? {
               headers: {
@@ -134,6 +140,7 @@ export class PostalMimeIncomingProvider implements IncomingMailProvider {
       maxNestingDepth: 20,
     });
     const from = mailbox(email.from);
+    const replyTo = email.replyTo?.map(mailbox).find(Boolean);
     const to = email.to?.map(mailbox).find(Boolean);
     if (!from?.email) throw new Error("Inbound email must include a valid From mailbox.");
     const text = email.text?.trim() || readableText(email.html ?? "");
@@ -141,6 +148,7 @@ export class PostalMimeIncomingProvider implements IncomingMailProvider {
     return {
       providerMessageId: email.messageId?.slice(0, 998) || "",
       from,
+      replyTo,
       to: to?.email ?? "",
       subject: (email.subject?.trim() || "Support request").slice(0, 240),
       text: text.slice(0, 100_000),

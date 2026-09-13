@@ -50,6 +50,13 @@
       "when": 1788860400000,
       "tag": "0006_inbox_tenant_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1788862200000,
+      "tag": "0007_customer_identities",
+      "breakpoints": true
     }
   ]
 }
