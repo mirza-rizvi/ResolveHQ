@@ -30,13 +30,6 @@ export async function mergeCustomers(
       "An erasure is queued for one of these customers. Wait for it to finish before merging.",
     );
 
-  const movedTickets =
-    (
-      await database
-        .prepare("SELECT count(*) AS count FROM tickets WHERE organization_id = ? AND customer_id = ?")
-        .bind(organizationId, source.id)
-        .first<{ count: number }>()
-    )?.count ?? 0;
   const identities = [
     ...(await listIdentities(database, organizationId, target.id)),
     ...(await listIdentities(database, organizationId, source.id)),
@@ -50,7 +43,26 @@ export async function mergeCustomers(
   );
   const now = Date.now();
 
-  await database.batch([
+  // The log is written first so its ticket count is taken inside the same
+  // transaction, before the tickets are re-pointed; the returned count comes
+  // from the update itself, so neither can drift from what actually moved.
+  const results = await database.batch([
+    database
+      .prepare(
+        "INSERT INTO activity_logs (id, organization_id, actor_user_id, event_type, entity_type, entity_id, metadata, request_id, created_at) VALUES (?, ?, ?, 'customer.merged', 'customer', ?, json_object('sourceId', ?, 'sourceEmail', ?, 'movedTickets', (SELECT count(*) FROM tickets WHERE organization_id = ? AND customer_id = ?)), ?, ?)",
+      )
+      .bind(
+        newId("act"),
+        organizationId,
+        actorUserId,
+        target.id,
+        source.id,
+        source.email,
+        organizationId,
+        source.id,
+        requestId,
+        now,
+      ),
     database
       .prepare(
         "UPDATE customer_identities SET customer_id = ?, is_primary = 0, source = 'merge', updated_at = ? WHERE organization_id = ? AND customer_id = ?",
@@ -87,19 +99,6 @@ export async function mergeCustomers(
         target.id,
       ),
     database.prepare("DELETE FROM customers WHERE organization_id = ? AND id = ?").bind(organizationId, source.id),
-    database
-      .prepare(
-        "INSERT INTO activity_logs (id, organization_id, actor_user_id, event_type, entity_type, entity_id, metadata, request_id, created_at) VALUES (?, ?, ?, 'customer.merged', 'customer', ?, ?, ?, ?)",
-      )
-      .bind(
-        newId("act"),
-        organizationId,
-        actorUserId,
-        target.id,
-        JSON.stringify({ sourceId: source.id, sourceEmail: source.email, movedTickets }),
-        requestId,
-        now,
-      ),
   ]);
-  return { movedTickets };
+  return { movedTickets: results[2]?.meta.changes ?? 0 };
 }

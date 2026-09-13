@@ -50,13 +50,13 @@ async function conflictingOwner(
   return owner && owner !== customerId ? owner : null;
 }
 
-function identityConflict(context: Context<HonoEnv>, ownerCustomerId: string) {
+function identityConflict(context: Context<HonoEnv>, ownerCustomerId: string | null) {
   return context.json(
     {
       error: {
         code: "identity_in_use",
         message: "Another customer already uses this email address.",
-        ownerCustomerId,
+        ...(ownerCustomerId ? { ownerCustomerId } : {}),
         requestId: context.get("requestId"),
       },
     },
@@ -216,7 +216,14 @@ customerRoutes.patch("/:id", validate("json", customerInput.partial()), async (c
     .where(and(eq(customers.id, current.id), eq(customers.organizationId, tenant.organizationId)));
   // A new address becomes the primary identity; the previous one stays behind
   // so replies sent to it still land on the same customer.
-  if (movesPrimary) await setPrimaryEmail(context.env.DB, tenant.organizationId, { ...current, ...rest }, email!);
+  if (movesPrimary)
+    try {
+      await setPrimaryEmail(context.env.DB, tenant.organizationId, { ...current, ...rest }, email!);
+    } catch (error) {
+      // Another request can claim the address between the check and the batch.
+      if (!String(error).includes("UNIQUE")) throw error;
+      return identityConflict(context, await identityOwner(context.env.DB, tenant.organizationId, email!));
+    }
   await requestCustomerRefresh(context.env, tenant.organizationId, current.id);
   return context.json({ customer: { ...current, ...input } });
 });

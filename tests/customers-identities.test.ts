@@ -296,4 +296,36 @@ describe("customer identities", () => {
       .first<{ count: number }>();
     expect(captures?.count).toBe(0);
   });
+
+  it("gives the oldest of two case-only duplicate customers the backfilled identity", async () => {
+    const workspace = await signup("identity-backfill-duplicate");
+    const migration = __D1_MIGRATIONS__.find((entry) => entry.name.includes("0007_customer_identities"));
+    const backfill = migration?.queries.find((query) => query.includes("INSERT OR IGNORE INTO `customer_identities`"));
+    expect(backfill).toBeDefined();
+    // `customers_organization_email_uidx` is case-sensitive, so an upgraded
+    // database can hold both spellings of one address.
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO customers (id, organization_id, name, email, normalized_search, created_at, updated_at) VALUES ('cus_dupe_old', ?, 'Older', 'Dup@example.test', 'older', ?, ?)",
+      ).bind(workspace.organizationId, now - 60_000, now - 60_000),
+      env.DB.prepare(
+        "INSERT INTO customers (id, organization_id, name, email, normalized_search, created_at, updated_at) VALUES ('cus_dupe_new', ?, 'Newer', 'dup@example.test', 'newer', ?, ?)",
+      ).bind(workspace.organizationId, now, now),
+    ]);
+
+    await env.DB.prepare(backfill!).run();
+
+    const rows = await env.DB.prepare(
+      "SELECT customer_id AS customerId FROM customer_identities WHERE organization_id = ? AND value = 'dup@example.test'",
+    )
+      .bind(workspace.organizationId)
+      .all<{ customerId: string }>();
+    expect(rows.results.map((row) => row.customerId)).toEqual(["cus_dupe_old"]);
+    // The loser keeps its record and its tickets; an admin folds it with Merge.
+    const listed = await request("/customers?q=newer", {}, workspace);
+    expect(((await listed.json()) as { customers: Array<{ id: string }> }).customers.map((row) => row.id)).toEqual([
+      "cus_dupe_new",
+    ]);
+  });
 });

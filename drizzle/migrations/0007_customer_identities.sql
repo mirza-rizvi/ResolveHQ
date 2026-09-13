@@ -13,4 +13,9 @@ CREATE UNIQUE INDEX `customer_identities_org_value_uidx` ON `customer_identities
 CREATE INDEX `customer_identities_customer_idx` ON `customer_identities` (`organization_id`,`customer_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `customer_identities_primary_uidx` ON `customer_identities` (`customer_id`) WHERE `is_primary` = 1;--> statement-breakpoint
 INSERT OR IGNORE INTO `customer_identities` (`id`, `organization_id`, `customer_id`, `kind`, `value`, `is_primary`, `source`, `created_at`, `updated_at`)
-  SELECT 'cid_' || `id`, `organization_id`, `id`, 'email', lower(`email`), 1, 'backfill', `created_at`, `updated_at` FROM `customers`;
+  SELECT 'cid_' || `id`, `organization_id`, `id`, 'email', lower(`email`), 1, 'backfill', `created_at`, `updated_at`
+  FROM (
+    SELECT `id`, `organization_id`, `email`, `created_at`, `updated_at`,
+      row_number() OVER (PARTITION BY `organization_id`, lower(`email`) ORDER BY `created_at`, `id`) AS rn
+    FROM `customers`
+  ) WHERE rn = 1;

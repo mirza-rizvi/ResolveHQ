@@ -63,4 +63,40 @@ describe("inbox resolution", () => {
       .first<{ count: number }>();
     expect(rows?.count).toBe(1);
   });
+
+  it("retires a case-only duplicate address instead of aborting the migration", async () => {
+    const workspace = await signup("inbox-duplicate-case");
+    const migration = __D1_MIGRATIONS__.find((entry) => entry.name.includes("0006_inbox_tenant_scope"));
+    expect(migration).toBeDefined();
+    // Recreate the pre-0006 shape: without the unique index two active inboxes
+    // may differ only by case, which is what an upgraded database can hold.
+    await env.DB.prepare("DROP INDEX IF EXISTS inboxes_lower_email_uidx").run();
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at) VALUES ('inb_dupe_old', ?, 'Older', 'Dupe@example.test', 'cloudflare_email', 0, ?, ?)",
+      ).bind(workspace.organizationId, now - 60_000, now - 60_000),
+      env.DB.prepare(
+        "INSERT INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at) VALUES ('inb_dupe_new', ?, 'Newer', 'dupe@example.test', 'cloudflare_email', 0, ?, ?)",
+      ).bind(workspace.organizationId, now, now),
+    ]);
+
+    for (const query of migration!.queries) await env.DB.prepare(query).run();
+
+    const rows = await env.DB.prepare(
+      "SELECT id, disabled_at AS disabledAt FROM inboxes WHERE lower(email_address) = 'dupe@example.test' ORDER BY created_at",
+    ).all<{ id: string; disabledAt: number | null }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["inb_dupe_old", "inb_dupe_new"]);
+    expect(rows.results[0].disabledAt).toBeNull();
+    expect(rows.results[1].disabledAt).toBeGreaterThan(0);
+    // The oldest survivor keeps the address, and the index now guards it.
+    expect(await resolveInbox(env.DB, "dupe@example.test")).toMatchObject({ id: "inb_dupe_old" });
+    await expect(
+      env.DB.prepare(
+        "INSERT INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at) VALUES ('inb_dupe_third', ?, 'Third', 'DUPE@example.test', 'cloudflare_email', 0, ?, ?)",
+      )
+        .bind(workspace.organizationId, now, now)
+        .run(),
+    ).rejects.toThrow(/UNIQUE/);
+  });
 });

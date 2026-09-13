@@ -39,7 +39,11 @@ export const inboxes = sqliteTable(
   (table) => [
     uniqueIndex("inboxes_email_address_uidx").on(table.emailAddress),
     index("inboxes_organization_idx").on(table.organizationId),
-    uniqueIndex("inboxes_lower_email_uidx").on(sql`lower(${table.emailAddress})`),
+    // Partial: only live inboxes claim an address, so migration 0006 can retire
+    // a case-only duplicate instead of failing to create the index.
+    uniqueIndex("inboxes_lower_email_uidx")
+      .on(sql`lower(${table.emailAddress})`)
+      .where(sql`${table.disabledAt} is null`),
   ],
 );
 
