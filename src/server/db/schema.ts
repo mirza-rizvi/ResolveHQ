@@ -39,7 +39,7 @@ export const inboxes = sqliteTable(
   (table) => [
     uniqueIndex("inboxes_email_address_uidx").on(table.emailAddress),
     index("inboxes_organization_idx").on(table.organizationId),
-    index("inboxes_lower_email_idx").on(sql`lower(${table.emailAddress})`),
+    uniqueIndex("inboxes_lower_email_uidx").on(sql`lower(${table.emailAddress})`),
   ],
 );
 

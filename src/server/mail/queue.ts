@@ -660,15 +660,21 @@ export async function resolveInbox(database: D1Database, recipient: string) {
   if (!organization) return null;
   const id = newId("inb");
   const now = Date.now();
-  await database
+  // The address is globally unique. Auto-provisioning may only ever return an
+  // inbox the claiming workspace owns, so the re-select after a lost insert
+  // race stays scoped to that tenant instead of adopting a stranger's inbox.
+  const inserted = await database
     .prepare(
-      "INSERT OR IGNORE INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at) VALUES (?, ?, 'Support', ?, 'cloudflare_email', 1, ?, ?)",
+      "INSERT INTO inboxes (id, organization_id, name, email_address, provider, is_default, created_at, updated_at) VALUES (?, ?, 'Support', ?, 'cloudflare_email', 1, ?, ?) ON CONFLICT DO NOTHING RETURNING id, organization_id AS organizationId",
     )
     .bind(id, organization.organizationId, recipient, now, now)
-    .run();
+    .first<{ id: string; organizationId: string }>();
+  if (inserted) return inserted;
   return database
-    .prepare("SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? LIMIT 1")
-    .bind(recipient)
+    .prepare(
+      "SELECT id, organization_id AS organizationId FROM inboxes WHERE lower(email_address) = ? AND organization_id = ? AND disabled_at IS NULL LIMIT 1",
+    )
+    .bind(recipient, organization.organizationId)
     .first<{ id: string; organizationId: string }>();
 }
 
