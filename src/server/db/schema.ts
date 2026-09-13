@@ -355,6 +355,8 @@ export const outboundMailJobs = sqliteTable(
     terminalReason: text("terminal_reason"),
     generation: integer("generation").notNull().default(0),
     firstAttemptAt: integer("first_attempt_at"),
+    /** Set immediately before a non-idempotent provider send; never cleared by a successful send. */
+    sendAttemptedAt: integer("send_attempted_at"),
     envelope: text("envelope"),
     sentAt: integer("sent_at", { mode: "timestamp_ms" }),
     ...timestamps,

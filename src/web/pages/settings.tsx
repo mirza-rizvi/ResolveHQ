@@ -16,7 +16,11 @@ interface SettingsData {
     isDefault: boolean;
     disabledAt: string | null;
   }>;
-  mail: { resendConfigured: boolean; webhookConfigured: boolean };
+  mail: {
+    provider: "cloudflare" | "resend" | "capture" | null;
+    resendConfigured: boolean;
+    webhookConfigured: boolean;
+  };
   ai: { available: boolean; enabled: boolean; provider: "workers-ai" | "openai" | null };
 }
 interface MailCapture {
@@ -220,6 +224,18 @@ export function SettingsPage() {
           <p>Secrets remain Worker bindings and are never returned to the browser.</p>
         </div>
         <dl className="readiness-list">
+          <div>
+            <dt>Provider</dt>
+            <dd>
+              {data.mail.provider === "cloudflare"
+                ? "Cloudflare Email Sending"
+                : data.mail.provider === "resend"
+                  ? "Resend"
+                  : data.mail.provider === "capture"
+                    ? "Captured locally"
+                    : "Missing"}
+            </dd>
+          </div>
           <div>
             <dt>Resend API key</dt>
             <dd>{data.mail.resendConfigured ? "Configured" : "Missing"}</dd>

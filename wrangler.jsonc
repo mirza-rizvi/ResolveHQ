@@ -50,6 +50,15 @@
   "ai": {
     "binding": "AI",
   },
+  // Optional native outbound email (Cloudflare Email Sending, Workers Paid, beta).
+  // Uncomment only after enabling Email Sending on the zone; the Deploy button
+  // cannot provision it, and on a Free account an unprovisioned binding fails the
+  // deploy. Leaving it commented keeps Resend as the sending provider.
+  // "send_email": [
+  //   {
+  //     "name": "EMAIL",
+  //   },
+  // ],
   "r2_buckets": [
     {
       "binding": "ATTACHMENTS",
@@ -117,6 +126,23 @@
         "max_batch_size": 10,
         "max_retries": 0,
       },
+      // Delivery events for Cloudflare Email Sending. The subscription itself is
+      // not declarable here and is created with
+      //   wrangler queues subscription create resolvehq-email-events \
+      //     --source email.sending --events delivered,bounced,failed,rejected,complained,deferred
+      // Uncomment both consumers only after creating both queues; see
+      // docs/deployment.md.
+      // {
+      //   "queue": "resolvehq-email-events",
+      //   "max_batch_size": 10,
+      //   "max_retries": 3,
+      //   "dead_letter_queue": "resolvehq-email-events-dlq",
+      // },
+      // {
+      //   "queue": "resolvehq-email-events-dlq",
+      //   "max_batch_size": 10,
+      //   "max_retries": 0,
+      // },
     ],
   },
   "ratelimits": [

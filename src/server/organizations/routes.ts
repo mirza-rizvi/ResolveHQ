@@ -15,7 +15,7 @@ import { requireAuth, requireRole } from "resolve-server/auth/middleware";
 import { resolveAppUrl } from "resolve-server/lib/app-url";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { newId } from "resolve-server/lib/id";
-import { sendSystemMail } from "resolve-server/mail/system";
+import { selectOutgoingProvider, sendSystemMail } from "resolve-server/mail/system";
 import { resolveAIProvider } from "../providers/ai";
 import { HttpError } from "resolve-server/http/errors";
 import { validate } from "resolve-server/http/validate";
@@ -79,6 +79,8 @@ organizationRoutes.get("/settings", async (context) => {
     workspace,
     inboxes: inboxRows,
     mail: {
+      // Built only to report which backend is active; constructing a provider makes no call.
+      provider: selectOutgoingProvider(context.env, tenant.organizationId)?.providerName ?? null,
       resendConfigured: Boolean(context.env.RESEND_API_KEY),
       webhookConfigured: Boolean(context.env.RESEND_WEBHOOK_SECRET),
     },

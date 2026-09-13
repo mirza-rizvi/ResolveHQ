@@ -41,10 +41,26 @@ export interface IncomingMailProvider {
 }
 
 export interface OutgoingMailProvider {
+  readonly providerName: "resend" | "cloudflare" | "capture";
+  /**
+   * True when the provider de-duplicates repeated sends of the same idempotency
+   * key. A false value means every attempt can produce another copy, so the
+   * caller must guard the send itself and never retry it automatically.
+   */
+  readonly idempotent: boolean;
   send(message: OutgoingMail, options?: { idempotencyKey?: string }): Promise<{ providerMessageId: string }>;
 }
 
+/** RFC 5322 message ids are stored angle-bracketed so inbound `References` match them verbatim. */
+export function normalizeMessageId(id: string) {
+  const value = id.trim();
+  if (!value) return value;
+  return value.startsWith("<") && value.endsWith(">") ? value : `<${value.replace(/^<|>$/g, "")}>`;
+}
+
 export class DevelopmentMailProvider implements OutgoingMailProvider {
+  readonly providerName = "capture" as const;
+  readonly idempotent = true;
   constructor(
     private readonly database: D1Database,
     private readonly organizationId: string | null = null,
@@ -82,6 +98,8 @@ export class DevelopmentMailProvider implements OutgoingMailProvider {
 }
 
 export class ResendMailProvider implements OutgoingMailProvider {
+  readonly providerName = "resend" as const;
+  readonly idempotent = true;
   constructor(private readonly apiKey: string) {}
 
   async send(message: OutgoingMail, options?: { idempotencyKey?: string }) {
@@ -130,6 +148,102 @@ export class ResendMailProvider implements OutgoingMailProvider {
       );
     return { providerMessageId: result.id };
   }
+}
+
+/**
+ * Cloudflare Email Sending (`send_email` binding). The platform assigns the
+ * Message-ID and offers no idempotency key, so a repeated send is a repeated
+ * email: `idempotent` is false and `processOutboundMail` records an attempt
+ * marker before calling `send`.
+ */
+export class CloudflareEmailProvider implements OutgoingMailProvider {
+  readonly providerName = "cloudflare" as const;
+  readonly idempotent = false;
+  /** Cloudflare caps a message at 5 MiB encoded; raw bytes are held well under it. */
+  private static readonly maxRawBytes = 3.5 * 1024 * 1024;
+  private static readonly timeoutMs = 15_000;
+
+  constructor(private readonly sender: SendEmail) {}
+
+  async send(message: OutgoingMail) {
+    const rawBytes =
+      byteLength(message.subject) +
+      byteLength(message.text) +
+      byteLength(message.html ?? "") +
+      (message.attachments?.reduce((total, file) => total + Math.ceil((file.content.length * 3) / 4), 0) ?? 0);
+    if (rawBytes > CloudflareEmailProvider.maxRawBytes)
+      throw new MailFailure(
+        "This message is too large to send. Remove or shrink the attachments and try again.",
+        true,
+        "attachments_too_large",
+      );
+    const builder = {
+      to: message.to,
+      from: message.from,
+      subject: message.subject,
+      text: message.text,
+      // The platform assigns the Message-ID, so none is set here; only the
+      // threading references travel as headers.
+      ...(message.html ? { html: message.html } : {}),
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+      ...(message.references?.length
+        ? {
+            headers: {
+              "In-Reply-To": message.references.at(-1)!,
+              References: message.references.join(" "),
+            },
+          }
+        : {}),
+      ...(message.attachments?.length
+        ? {
+            attachments: message.attachments.map((file) => ({
+              filename: file.filename,
+              type: file.contentType,
+              content: decodeBase64(file.content),
+            })),
+          }
+        : {}),
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let result: { messageId?: string };
+    try {
+      result = await Promise.race([
+        this.sender.send(builder as Parameters<SendEmail["send"]>[0]),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new MailFailure(
+                  "The mail binding did not confirm this send in time.",
+                  true,
+                  "delivery_uncertain",
+                ),
+              ),
+            CloudflareEmailProvider.timeoutMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      if (error instanceof MailFailure) throw error;
+      throw new MailFailure("The mail binding rejected this message.", true, "provider_rejected");
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    if (!result?.messageId)
+      throw new MailFailure("The mail binding returned no message id.", true, "provider_rejected");
+    return { providerMessageId: normalizeMessageId(result.messageId) };
+  }
+}
+
+function byteLength(value: string) {
+  return new TextEncoder().encode(value).length;
+}
+
+function decodeBase64(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 export class PostalMimeIncomingProvider implements IncomingMailProvider {

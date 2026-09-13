@@ -16,6 +16,14 @@ export interface AppBindings {
   APP_URL?: string;
   SESSION_PEPPER: string;
   DEV_MAIL_MODE: "capture" | "disabled";
+  /**
+   * Optional Cloudflare Email Sending binding (`send_email`). When present it is
+   * preferred over RESEND_API_KEY. Requires Workers Paid and a zone with Email
+   * Sending enabled; the binding stays commented out in wrangler.jsonc.
+   */
+  EMAIL?: SendEmail;
+  /** Optional override for the delivery-event queue name (default `resolvehq-email-events`). */
+  EMAIL_EVENTS_QUEUE_NAME?: string;
   RESEND_API_KEY?: string;
   RESEND_WEBHOOK_SECRET?: string;
   SYSTEM_MAIL_FROM?: string;

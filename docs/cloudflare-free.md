@@ -69,6 +69,7 @@ npx wrangler d1 execute DB --remote --command "UPDATE maintenance_tasks SET stat
 - Bulk updates retain optimistic version checks and assignment/activity behavior. As before, ticket mutation and subsequent audit/notification persistence are separate database operations; catastrophic interruption can leave partial side effects.
 - Bounded sweeps limit work returned and written, not necessarily every row read by a sparse recovery predicate. Large backlogs and tenant histories can require further indexing/retention work or an upgrade.
 - Free Queue retention is 24 hours. D1 recovery mitigates expiry, but quota exhaustion delays mail and cleanup. DLQ delivery itself can fail; retained D1 terminal state is authoritative.
+- Native Cloudflare email (the optional `send_email` binding) is a Workers Paid beta and stays commented out, so a Free deployment sends through Resend. If it is enabled, its delivery-event subscription consumes Queues operations from the same daily allowance as inbound and outbound mail.
 - System invitation/reset emails use Resend directly and are not durable ticket-mail jobs. A verified sender and working provider are required.
 - R2 usage beyond its allowance, domain ownership, Resend quotas, logs, Workers traffic/CPU, or D1 quotas may incur cost or require upgrades. This release does not deploy to or certify any production account.
 

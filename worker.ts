@@ -1,5 +1,6 @@
 import app from "resolve-server/app";
 import type { AppBindings, MailQueueMessage } from "resolve-server/types";
+import { processCloudflareEmailEvent, type CloudflareEmailEvent } from "./src/server/mail/delivery-events";
 import { processInboundMail, processOutboundMail, resolveInbox } from "./src/server/mail/queue";
 import { dispatchMail, leaseMs, MailFailure } from "./src/server/mail/reliability";
 import { processMaintenance } from "./src/server/maintenance/service";
@@ -58,12 +59,40 @@ export default {
     await dispatchMail(env, "inbound-mail", [eventId]);
   },
   async queue(batch, env) {
+    // Cloudflare Email Sending delivery events arrive on their own subscription
+    // queue. It is matched before the dead-letter check because its own DLQ also
+    // ends in "-dlq" and carries event bodies, not mail jobs.
+    const emailEventsQueue = env.EMAIL_EVENTS_QUEUE_NAME || "resolvehq-email-events";
+    if (batch.queue === emailEventsQueue || batch.queue === `${emailEventsQueue}-dlq`) {
+      const deadLetter = batch.queue !== emailEventsQueue;
+      for (const message of batch.messages) {
+        if (deadLetter) {
+          console.error({ event: "email_event_dead_letter", queue: batch.queue });
+          message.ack();
+          continue;
+        }
+        try {
+          const { accepted } = await processCloudflareEmailEvent(env.DB, message.body);
+          if (!accepted) console.error({ event: "invalid_email_event", queue: batch.queue });
+          message.ack();
+        } catch {
+          console.error({ event: "email_event_failure", queue: batch.queue });
+          message.retry({ delaySeconds: 60 });
+        }
+      }
+      return;
+    }
     // Dead-letter consumers drain exhausted and terminal work. Each message's
     // durable row is marked queue_exhausted so it stops looking in-flight,
     // the arrival is recorded once, and the message is acknowledged.
     if (batch.queue.endsWith("-dlq")) {
       for (const message of batch.messages) {
-        const body = message.body as MailQueueMessage;
+        const body = message.body;
+        if (!body || typeof body !== "object" || !("kind" in body)) {
+          console.error({ event: "invalid_dead_letter", queue: batch.queue });
+          message.ack();
+          continue;
+        }
         try {
           if (body.kind === "outbound-mail") {
             await env.DB.batch([
@@ -103,11 +132,16 @@ export default {
       return;
     }
     for (const message of batch.messages) {
+      const body = message.body;
+      if (!body || typeof body !== "object" || !("kind" in body)) {
+        console.error({ event: "invalid_queue_message", queue: batch.queue });
+        message.ack();
+        continue;
+      }
       try {
-        if (message.body.kind === "inbound-mail") await processInboundMail(env, message.body);
-        else if (message.body.kind === "outbound-mail") await processOutboundMail(env, { jobId: message.body.jobId });
-        else if (message.body.kind === "maintenance")
-          await processMaintenance(env, message.body.taskId, message.body.generation);
+        if (body.kind === "inbound-mail") await processInboundMail(env, body);
+        else if (body.kind === "outbound-mail") await processOutboundMail(env, { jobId: body.jobId });
+        else if (body.kind === "maintenance") await processMaintenance(env, body.taskId, body.generation);
         else {
           console.error({ event: "invalid_queue_message" });
           message.ack();
@@ -117,17 +151,12 @@ export default {
       } catch (error) {
         console.error({
           event: "queue_failure",
-          kind: message.body.kind,
+          kind: body.kind,
           code: error instanceof MailFailure ? error.code : "infrastructure_failure",
         });
         if (error instanceof MailFailure && error.terminal) {
-          const dlq = message.body.kind === "inbound-mail" ? env.INBOUND_MAIL_DLQ : env.OUTBOUND_MAIL_DLQ;
-          if (dlq)
-            await dlq.send(
-              message.body.kind === "outbound-mail"
-                ? { ...message.body, generation: message.body.generation }
-                : message.body,
-            );
+          const dlq = body.kind === "inbound-mail" ? env.INBOUND_MAIL_DLQ : env.OUTBOUND_MAIL_DLQ;
+          if (dlq) await dlq.send(body.kind === "outbound-mail" ? { ...body, generation: body.generation } : body);
           message.ack();
         } else message.retry({ delaySeconds: error instanceof MailFailure ? error.delaySeconds : 60 });
       }
@@ -136,4 +165,4 @@ export default {
   async scheduled(_controller, env) {
     await runScheduled(env);
   },
-} satisfies ExportedHandler<AppBindings, MailQueueMessage>;
+} satisfies ExportedHandler<AppBindings, MailQueueMessage | CloudflareEmailEvent>;

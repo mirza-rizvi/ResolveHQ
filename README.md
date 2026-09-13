@@ -29,7 +29,7 @@ Use **Cmd/Ctrl+K** to jump between pages. The sidebar dock contains notification
 
 ## How it works
 
-ResolveHQ runs as a single Cloudflare Worker in your own account. Hono serves both the REST API and the built React application. Cloudflare D1 holds tickets and customers, Cloudflare R2 holds attachments, and Cloudflare Queues carry inbound and outbound mail jobs. Cloudflare Email Routing delivers incoming mail to the Worker, and Resend sends outgoing mail. Tickets and attachments are stored in your Cloudflare account; outbound email content passes through Resend.
+ResolveHQ runs as a single Cloudflare Worker in your own account. Hono serves both the REST API and the built React application. Cloudflare D1 holds tickets and customers, Cloudflare R2 holds attachments, and Cloudflare Queues carry inbound and outbound mail jobs. Cloudflare Email Routing delivers incoming mail to the Worker, and Resend sends outgoing mail. Tickets and attachments are stored in your Cloudflare account; outbound email content passes through Resend. On Workers Paid you can send natively through Cloudflare Email Sending instead, and no mail content leaves your account.
 
 ## How much does it cost?
 
@@ -68,6 +68,7 @@ The Vite application runs on `http://localhost:5173` and proxies `/api` to Wrang
 ## Optional configuration
 
 - **AI assistance**: summaries, reply drafts, classification, and translation. The Worker prefers Cloudflare Workers AI, which runs in your own account; `wrangler.jsonc` declares the `AI` binding, so a normal deploy provisions it and no key is needed. Set `WORKERS_AI_MODEL` to change the text model (default `@cf/meta/llama-4-scout-17b-16e-instruct`; translation always uses `@cf/meta/m2m100-1.2b`) or `AI_GATEWAY_ID` to send the calls through an AI Gateway. OpenAI is still supported: without the binding, `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) is used instead. Either way each workspace opts in through Settings, and with neither configured the feature stays hidden and no AI calls are made.
+- **Native outbound email**: on Workers Paid, uncomment the `send_email` binding in `wrangler.jsonc` to send through Cloudflare Email Sending instead of Resend, and subscribe a queue to its delivery events. Cloudflare assigns the Message-ID and offers no idempotency key, so a send that is never confirmed stops for administrator review rather than being retried. Leave it commented out and Resend remains the provider. See the [deployment guide](docs/deployment.md).
 - **Retention**: set `TICKET_RETENTION_DAYS` as a Worker variable to automatically delete resolved and closed tickets (with attachments) after that many days. Unset means nothing is deleted automatically.
 - **Turnstile**: set `TURNSTILE_SITE_KEY` as a Worker variable and `TURNSTILE_SECRET_KEY` as a Worker secret to add a Cloudflare Turnstile challenge to sign-in, sign-up, and forgot-password. Leave both unset and the forms behave exactly as before, with no script loaded and no challenge shown.
 

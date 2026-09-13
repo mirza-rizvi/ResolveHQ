@@ -12,7 +12,7 @@ mailRecoveryRoutes.get("/", async (context) => {
   const rows = await context.env.DB.prepare(
     `
     SELECT j.id, 'outbound-mail' AS kind, j.terminal_reason AS reason, j.generation, j.updated_at AS updatedAt,
-      j.first_attempt_at AS firstAttemptAt, (j.first_attempt_at IS NOT NULL OR j.terminal_reason = 'delivery_uncertain') AS requiresDuplicateAck,
+      j.first_attempt_at AS firstAttemptAt, (j.first_attempt_at IS NOT NULL OR j.send_attempted_at IS NOT NULL OR j.terminal_reason = 'delivery_uncertain') AS requiresDuplicateAck,
       t.id AS ticketId, t.number AS ticketNumber, t.subject
     FROM outbound_mail_jobs j LEFT JOIN messages m ON m.id = j.message_id AND m.organization_id = j.organization_id
     LEFT JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = j.organization_id
@@ -47,16 +47,23 @@ mailRecoveryRoutes.post(
     const inbound = input.kind === "inbound-mail";
     const table = inbound ? "inbound_mail_events" : "outbound_mail_jobs";
     const row = await context.env.DB.prepare(
-      `SELECT id, terminal_reason AS reason, generation, ${inbound ? "staging_object_key AS objectKey" : "first_attempt_at AS firstAttemptAt"} FROM ${table} WHERE id = ? AND organization_id = ? AND status = 'failed' AND terminal_reason IS NOT NULL`,
+      `SELECT id, terminal_reason AS reason, generation, ${inbound ? "staging_object_key AS objectKey" : "first_attempt_at AS firstAttemptAt, send_attempted_at AS sendAttemptedAt"} FROM ${table} WHERE id = ? AND organization_id = ? AND status = 'failed' AND terminal_reason IS NOT NULL`,
     )
       .bind(context.req.param("id"), tenant.organizationId)
-      .first<{ id: string; reason: string; generation: number; objectKey?: string; firstAttemptAt?: number }>();
+      .first<{
+        id: string;
+        reason: string;
+        generation: number;
+        objectKey?: string;
+        firstAttemptAt?: number;
+        sendAttemptedAt?: number;
+      }>();
     if (!row) throw new HttpError(404, "job_not_found", "Stopped mail job not found.");
     if (row.reason === "email.complained")
       throw new HttpError(409, "complaint_blocked", "A spam complaint prevents resending this message.");
     if (
       !inbound &&
-      (row.firstAttemptAt != null || row.reason === "delivery_uncertain") &&
+      (row.firstAttemptAt != null || row.sendAttemptedAt != null || row.reason === "delivery_uncertain") &&
       !input.acknowledgeDuplicateRisk
     )
       throw new HttpError(
@@ -74,7 +81,7 @@ mailRecoveryRoutes.post(
         "The original email is no longer available. Ask the sender to resend it.",
       );
     const changed = await context.env.DB.prepare(
-      `UPDATE ${table} SET status = '${inbound ? "staged" : "pending"}', terminal_reason = NULL, last_error = NULL, attempts = 0, dispatch_until = 0, next_attempt_at = 0, generation = generation + 1, updated_at = ?${inbound ? "" : ", first_attempt_at = NULL, envelope = NULL, idempotency_key = 'message/' || message_id || '/retry/' || (generation + 1)"} WHERE id = ? AND organization_id = ? AND generation = ? AND status = 'failed' AND lease_until <= ? AND terminal_reason = ? RETURNING id`,
+      `UPDATE ${table} SET status = '${inbound ? "staged" : "pending"}', terminal_reason = NULL, last_error = NULL, attempts = 0, dispatch_until = 0, next_attempt_at = 0, generation = generation + 1, updated_at = ?${inbound ? "" : ", first_attempt_at = NULL, send_attempted_at = NULL, envelope = NULL, idempotency_key = 'message/' || message_id || '/retry/' || (generation + 1)"} WHERE id = ? AND organization_id = ? AND generation = ? AND status = 'failed' AND lease_until <= ? AND terminal_reason = ? RETURNING id`,
     )
       .bind(Date.now(), row.id, tenant.organizationId, input.generation, Date.now(), row.reason)
       .first();

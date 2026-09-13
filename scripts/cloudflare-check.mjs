@@ -28,6 +28,26 @@ for (const binding of ["INBOUND_MAIL_QUEUE", "OUTBOUND_MAIL_QUEUE", "MAINTENANCE
     `${binding}: producer, bounded consumer, and dead-letter queue configured`,
   );
 }
+// Native Cloudflare email is opt-in and stays commented out in the shipped
+// config, so its blocks are only validated once someone enables them.
+const emailBinding = config.send_email?.find((x) => x.name === "EMAIL");
+const emailEventsConsumer = config.queues?.consumers?.find((x) => x.queue === "resolvehq-email-events");
+if (emailBinding || emailEventsConsumer) {
+  check(Boolean(emailBinding), "send_email binding named EMAIL configured");
+  check(
+    Boolean(emailEventsConsumer?.dead_letter_queue) &&
+      config.queues?.consumers?.some((x) => x.queue === emailEventsConsumer?.dead_letter_queue),
+    "Delivery-event consumer has a declared dead-letter queue",
+  );
+  check(
+    docs.includes("queues subscription create"),
+    "Delivery-event subscription step documented (it cannot be declared in wrangler.jsonc)",
+  );
+} else {
+  console.log(
+    "\u2139 Native Cloudflare email (send_email binding and resolvehq-email-events consumer) is commented out; Resend remains the sending provider.",
+  );
+}
 check(
   config.ai?.binding === "AI",
   "Workers AI binding configured (OPENAI_API_KEY remains the fallback when it is absent)",

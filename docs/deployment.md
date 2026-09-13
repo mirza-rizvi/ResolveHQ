@@ -29,6 +29,7 @@ Workers Free is supported subject to CPU and service quotas; a successful deploy
 - `DEV_MAIL_MODE` defaults to `disabled` in production; set it to `capture` locally to record outgoing mail in Settings instead of sending it.
 - `RESEND_API_KEY` is optional; required to actually send outbound mail.
 - `RESEND_WEBHOOK_SECRET` is optional; required to verify Resend delivery webhooks.
+- `EMAIL` is an optional `send_email` binding for native Cloudflare Email Sending. When bound it replaces Resend for all outgoing mail; see the section below. It requires Workers Paid and stays commented out in `wrangler.jsonc`.
 - `SYSTEM_MAIL_FROM` sets the sender used for password reset and invitation email. For production, use an address on a Resend-verified domain; the default workers.dev sender usually cannot send through Resend.
 - `TICKET_RETENTION_DAYS` is optional. Set a whole number of days (1–3650) and the 5-minute cron permanently deletes resolved and closed tickets whose last activity is older, including their attachments and in-flight mail. Unset keeps everything until you erase it manually.
 
@@ -52,6 +53,60 @@ Both must be set together: the server only exposes the site key from `GET /api/a
 ## Resend webhooks
 
 Point Resend's webhooks at `https://<your-worker>/api/webhooks/resend` and set `RESEND_WEBHOOK_SECRET` so signatures can be verified.
+
+## Native Cloudflare email (optional, Workers Paid)
+
+Outgoing mail goes through Resend by default. Cloudflare Email Sending can send it from your own
+account instead, with no third-party key. It is in beta, it needs Workers Paid, and its delivery
+events arrive on a Queues event subscription rather than a webhook. Neither the binding nor the
+subscription can be provisioned by the Deploy button, so both ship commented out in `wrangler.jsonc`
+and a deploy that does not want them is unaffected.
+
+1. Enable Email Sending on the zone you send from (Cloudflare dashboard, your domain, Email) and
+   verify the sending domain.
+2. Uncomment the `send_email` block in `wrangler.jsonc`:
+
+   ```jsonc
+   "send_email": [{ "name": "EMAIL" }],
+   ```
+
+3. Create the delivery-event queues:
+
+   ```bash
+   npx wrangler queues create resolvehq-email-events
+   npx wrangler queues create resolvehq-email-events-dlq
+   ```
+
+4. Subscribe the queue to the sending events:
+
+   ```bash
+   npx wrangler queues subscription create resolvehq-email-events \
+     --source email.sending \
+     --events delivered,bounced,failed,rejected,complained,deferred
+   ```
+
+5. Uncomment the two `resolvehq-email-events` consumer blocks in `wrangler.jsonc`.
+6. Redeploy with `npm run deploy`.
+
+Once `EMAIL` is bound the Worker sends every outgoing message through it and ignores
+`RESEND_API_KEY`. **Settings, Mail delivery** names the provider that is actually in use. Set
+`EMAIL_EVENTS_QUEUE_NAME` only if you name the queue something other than `resolvehq-email-events`.
+
+Two things behave differently from Resend:
+
+- **No idempotency key, and no Message-ID of your own.** Cloudflare assigns the Message-ID and has no
+  way to collapse a repeated send, so a resend is a second email in the customer's mailbox. ResolveHQ
+  records an attempt marker before it calls the binding and never sends that job again on its own: a
+  send that was never confirmed stops in **Settings, Stopped mail** and goes out again only when an
+  administrator accepts the duplicate risk. Replies still thread, because the id the binding returns is
+  stored as the message's provider id and matched against the `References` header of incoming mail.
+- **Receiving is still Email Routing.** Email Sending only sends. Keep the routing rule that forwards
+  your support address to the Worker, and add a catch-all rule for the sending domain if you enable
+  `OUTBOUND_REPLY_TOKEN`, or tagged replies never reach the Worker.
+
+`npm run cloudflare:check` validates the binding name, the dead-letter queue, and this documented
+subscription step once the blocks are uncommented; while they are commented it prints an information
+line and stays green.
 
 ## Manual deployment
 

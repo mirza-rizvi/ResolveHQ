@@ -485,7 +485,7 @@ export async function processOutboundMail(
   const now = new Date();
   let job = payload.jobId
     ? await env.DB.prepare(
-        "SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts, lease_until AS leaseUntil, first_attempt_at AS firstAttemptAt, envelope, generation FROM outbound_mail_jobs WHERE id = ?",
+        "SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts, lease_until AS leaseUntil, first_attempt_at AS firstAttemptAt, send_attempted_at AS sendAttemptedAt, envelope, generation FROM outbound_mail_jobs WHERE id = ?",
       )
         .bind(payload.jobId)
         .first<JobRow>()
@@ -506,7 +506,7 @@ export async function processOutboundMail(
       )
       .run();
     job = await env.DB.prepare(
-      "SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts, lease_until AS leaseUntil, first_attempt_at AS firstAttemptAt, envelope, generation FROM outbound_mail_jobs WHERE message_id = ?",
+      "SELECT id, organization_id AS organizationId, message_id AS messageId, idempotency_key AS idempotencyKey, status, attempts, lease_until AS leaseUntil, first_attempt_at AS firstAttemptAt, send_attempted_at AS sendAttemptedAt, envelope, generation FROM outbound_mail_jobs WHERE message_id = ?",
     )
       .bind(payload.messageId)
       .first<JobRow>();
@@ -579,6 +579,29 @@ export async function processOutboundMail(
       await env.DB.prepare("UPDATE outbound_mail_jobs SET envelope = ?, first_attempt_at = ? WHERE id = ?")
         .bind(JSON.stringify(envelope), Date.now(), job.id)
         .run();
+    // A provider without an idempotency key cannot collapse a repeated send, so
+    // the attempt is recorded in its own generation-fenced statement before the
+    // send. A job that carries the marker was already handed to the provider
+    // once and must never be sent again automatically.
+    if (!provider.idempotent) {
+      if (job.sendAttemptedAt != null)
+        throw new MailFailure(
+          "An earlier send was never confirmed. Review it before resending.",
+          true,
+          "delivery_uncertain",
+        );
+      const marked = await env.DB.prepare(
+        "UPDATE outbound_mail_jobs SET send_attempted_at = ? WHERE id = ? AND generation = ? AND send_attempted_at IS NULL RETURNING id",
+      )
+        .bind(Date.now(), job.id, job.generation)
+        .first();
+      if (!marked)
+        throw new MailFailure(
+          "An earlier send was never confirmed. Review it before resending.",
+          true,
+          "delivery_uncertain",
+        );
+    }
     const resolved: OutgoingMail = {
       ...envelope,
       attachments: envelope.attachmentManifest?.length
@@ -611,6 +634,14 @@ export async function processOutboundMail(
     const delay = retryDelay(attempts);
     const terminal = (error instanceof MailFailure && error.terminal) || attempts >= maxAttempts;
     const code = error instanceof MailFailure ? error.code : "delivery_uncertain";
+    // Only a synchronous rejection proves nothing left the Worker; every other
+    // failure leaves delivery unknown, so the marker stays set.
+    if (code === "provider_rejected")
+      await env.DB.prepare(
+        "UPDATE outbound_mail_jobs SET send_attempted_at = NULL WHERE id = ? AND generation = ?",
+      )
+        .bind(job.id, job.generation)
+        .run();
     await db
       .update(outboundMailJobs)
       .set({
@@ -653,6 +684,7 @@ interface TicketReference {
 interface JobRow {
   leaseUntil: number;
   firstAttemptAt: number | null;
+  sendAttemptedAt: number | null;
   envelope: string | null;
   generation: number;
   id: string;

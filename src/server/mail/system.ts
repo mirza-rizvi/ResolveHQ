@@ -1,7 +1,13 @@
-import { DevelopmentMailProvider, ResendMailProvider, type OutgoingMailProvider } from "../providers/mail";
+import {
+  CloudflareEmailProvider,
+  DevelopmentMailProvider,
+  ResendMailProvider,
+  type OutgoingMailProvider,
+} from "../providers/mail";
 import type { AppBindings } from "../types";
 
 export function selectOutgoingProvider(env: AppBindings, organizationId: string | null): OutgoingMailProvider | null {
+  if (env.EMAIL) return new CloudflareEmailProvider(env.EMAIL);
   if (env.RESEND_API_KEY) return new ResendMailProvider(env.RESEND_API_KEY);
   if (env.DEV_MAIL_MODE === "capture") return new DevelopmentMailProvider(env.DB, organizationId);
   return null;
