@@ -70,7 +70,7 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.9.8",
-    "lucide-react": "^0.544.0",
+    "lucide-react": "^1.45.0",
     "postal-mime": "^2.7.6",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
