@@ -93,7 +93,7 @@
     "@vitejs/plugin-react": "^5.0.2",
     "drizzle-kit": "^0.31.4",
     "eslint": "^9.35.0",
-    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.4.20",
     "jsdom": "^26.1.0",
     "prettier": "^3.9.6",
