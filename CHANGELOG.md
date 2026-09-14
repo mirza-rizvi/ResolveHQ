@@ -4,6 +4,10 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] - 2026-09-14
+
 ### Added
 - Screenshots of the inbox, ticket thread, dashboard, reports, knowledge base, automations, customers, settings, help center, dark mode, and mobile layout in `docs/images/`, shown in the README. `npm run screenshots` regenerates them from the demo seed.
 - Customer identities: one customer can have several email addresses. Add or remove addresses on the customer record; admins can merge two customers, which moves tickets, messages, tags, and addresses onto the surviving record.
