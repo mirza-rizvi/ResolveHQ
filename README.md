@@ -100,6 +100,7 @@ needs `wrangler login` or `CLOUDFLARE_API_TOKEN`.
 - [Deployment and configuration](docs/deployment.md)
 - [Architecture](docs/architecture.md)
 - [Security](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## Optional configuration
 
