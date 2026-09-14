@@ -6,8 +6,6 @@ ResolveHQ is a Cloudflare-native, self-hostable helpdesk for small support teams
 
 Requirements: a Cloudflare account and a domain on Cloudflare (for Email Routing). Runs on the Free plan for small teams.
 
-License: source-available. You may read, run, and modify it for personal or internal use; selling it, offering it as a hosted service, or redistributing it needs written permission. See [LICENSE](LICENSE).
-
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mirza-rizvi/ResolveHQ)
 
 ## Screenshots
