@@ -1,0 +1,48 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: ResolveHQ version
+      placeholder: v0.2.0 or commit sha
+    validations:
+      required: true
+  - type: dropdown
+    id: plan
+    attributes:
+      label: Cloudflare plan
+      options: [Workers Free, Workers Paid]
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it happens
+      options: [Deployed Worker, Local dev (npm run dev), Tests]
+    validations:
+      required: true
+  - type: input
+    id: mail
+    attributes:
+      label: Mail providers in use
+      placeholder: "inbound: Email Routing; outbound: Resend / Cloudflare Email Sending / capture"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Wrangler or dashboard logs with secrets, customer data, and email addresses removed.
+      render: text

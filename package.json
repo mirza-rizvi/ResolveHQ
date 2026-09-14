@@ -2,6 +2,33 @@
   "name": "resolvehq",
   "version": "0.2.0",
   "private": true,
+  "description": "Self-hosted helpdesk on Cloudflare Workers: D1, R2, Queues, Email Routing. Shared inbox, email threading, AI assist.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mirza-rizvi/ResolveHQ.git"
+  },
+  "homepage": "https://github.com/mirza-rizvi/ResolveHQ#readme",
+  "bugs": {
+    "url": "https://github.com/mirza-rizvi/ResolveHQ/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": [
+    "helpdesk",
+    "customer-support",
+    "shared-inbox",
+    "self-hosted",
+    "cloudflare-workers",
+    "cloudflare-d1",
+    "cloudflare-r2",
+    "cloudflare-queues",
+    "email-routing",
+    "workers-ai",
+    "hono",
+    "react"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
