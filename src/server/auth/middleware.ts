@@ -19,7 +19,7 @@ export function assertMutationOrigin(context: Context<HonoEnv>): void {
   // header, the browser is talking to this site directly, which is the thing
   // cross-site request forgery tries to fake. A forged Host without a
   // victim browser is outside the CSRF threat model.
-  let originHost: string | null = null;
+  let originHost: string | null;
   try {
     originHost = new URL(origin).host;
   } catch {

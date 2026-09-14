@@ -4,7 +4,8 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+- Applied the open Dependabot updates: Hono, Zod, Tiptap, React 19.3, Playwright, and TypeScript ESLint bumped to their latest minor/patch; `@testing-library/jest-dom` to 7.0.1; `lucide-react` to 1.x (major, icon names unchanged); ESLint to 10 with `eslint-plugin-react-hooks` 7 (adds React Compiler lint rules; `set-state-in-effect` and `refs` kept at warn pending a follow-up cleanup pass); GitHub Actions `actions/checkout`/`actions/setup-node` to v7 and `cloudflare/wrangler-action` to v4 (Wrangler version pin unchanged).
 
 ## [0.2.0] - 2026-09-14
 

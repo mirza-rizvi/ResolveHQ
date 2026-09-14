@@ -30,11 +30,13 @@ export function ReportsPage() {
   const [days, setDays] = useState(30);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState("");
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const from = new Date(Date.now() - days * 86_400_000).toISOString();
     const to = new Date().toISOString();
+    setRange({ from, to });
     setSummary(null);
     setError("");
     api<Summary>(`/reports/summary?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)
@@ -50,7 +52,9 @@ export function ReportsPage() {
   }, [days]);
 
   const peak = Math.max(1, ...(summary?.series.map((point) => Math.max(point.created, point.resolved)) ?? [1]));
-  const exportHref = `/api/reports/export?from=${encodeURIComponent(new Date(Date.now() - days * 86_400_000).toISOString())}&to=${encodeURIComponent(new Date().toISOString())}`;
+  const exportHref = range
+    ? `/api/reports/export?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`
+    : undefined;
   return (
     <div className="standard-page">
       <header className="page-header">

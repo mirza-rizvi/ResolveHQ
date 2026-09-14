@@ -13,6 +13,11 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": "off",
+      // eslint-plugin-react-hooks 7 recommended enables React Compiler rules.
+      // Downgraded to warn pending a follow-up pass to fix the flagged sites
+      // (setState-in-effect in auth pages, one ref-during-render case).
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/refs": "warn",
     },
   },
   { files: ["tests/**/*.d.ts"], rules: { "@typescript-eslint/no-empty-object-type": "off" } },
