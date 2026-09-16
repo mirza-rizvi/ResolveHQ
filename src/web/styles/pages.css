@@ -1733,3 +1733,127 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* API keys — list, creation form, and the one-time reveal. */
+.api-key-list {
+  display: grid;
+  gap: 8px;
+}
+.api-key-list article {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.api-key-list article.api-key-inactive {
+  opacity: 0.72;
+  border-style: dashed;
+}
+.api-key-list strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+}
+.api-key-list small {
+  display: block;
+  margin-top: 4px;
+  color: var(--quiet);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.api-key-list .api-key-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--badge-amber-ink);
+}
+.api-key-form {
+  display: grid;
+  gap: 12px;
+}
+.api-key-form fieldset {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.api-key-form legend {
+  padding: 0 4px;
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.api-key-form fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.api-key-reveal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 45%);
+}
+.api-key-reveal > div {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  max-width: 520px;
+  padding: 22px;
+  background: var(--surface);
+  border-radius: 10px;
+}
+.api-key-reveal h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+.api-key-reveal p {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 12px;
+}
+.api-key-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border-radius: 6px;
+}
+.api-key-value code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .api-key-reveal > div {
+    /* Full screen, with the copy button above the fold. */
+    max-width: none;
+    height: 100%;
+    align-content: start;
+    border-radius: 0;
+  }
+  .api-key-list article {
+    flex-direction: column;
+  }
+}

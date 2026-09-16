@@ -713,6 +713,48 @@ export const csatResponses = sqliteTable(
   ],
 );
 
+export const apiKeyScopes = [
+  "tickets:read",
+  "tickets:write",
+  "customers:read",
+  "customers:write",
+  "kb:read",
+  "reports:read",
+  "mcp:read",
+] as const;
+
+export const apiKeys = sqliteTable(
+  "api_keys",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** First characters of the key, for display only. Never enough to authenticate. */
+    prefix: text("prefix").notNull(),
+    /** SHA-256 of the whole key. Uniquely indexed, so authentication is one lookup. */
+    keyHash: text("key_hash").notNull(),
+    scopes: text("scopes", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** Null means every inbox. */
+    inboxIds: text("inbox_ids", { mode: "json" }).$type<string[] | null>(),
+    /**
+     * Load-bearing, not decorative: authorization re-reads this member's live role on
+     * every request, so demoting them immediately reduces the key's power. A deleted
+     * member orphans the key, which is then denied.
+     */
+    createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("api_keys_hash_uidx").on(table.keyHash),
+    index("api_keys_org_revoked_idx").on(table.organizationId, table.revokedAt),
+  ],
+);
+
 export const settings = sqliteTable(
   "settings",
   {

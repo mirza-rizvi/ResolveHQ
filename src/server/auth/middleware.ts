@@ -38,6 +38,14 @@ export function assertMutationOrigin(context: Context<HonoEnv>): void {
 }
 
 export const requireAuth: MiddlewareHandler<HonoEnv> = async (context, next) => {
+  // /api/v1 mounts these same route objects behind an API-key middleware that has
+  // already resolved the caller. There is no browser session on that path, so there is
+  // no CSRF token to match and nothing to re-resolve.
+  if (context.get("apiKey")) {
+    await next();
+    return;
+  }
+
   const tenant = await resolveTenant(context);
   if (!tenant) throw new HttpError(401, "unauthenticated", "Sign in to continue.");
 

@@ -62,6 +62,8 @@ export interface TenantContext {
 
 export type AppVariables = {
   tenant: TenantContext;
+  /** Present only when the caller authenticated with an API key rather than a session. */
+  apiKey?: import("./auth/api-key").ApiKeyContext;
   requestId: string;
   authTimings?: import("./auth/password").AuthTiming[];
 };

@@ -51,6 +51,32 @@ Both must be set together: the server only exposes the site key from `GET /api/a
 4. Send a test email to that address. It should appear in the inbox shortly after.
 5. Replies go out through Resend once `RESEND_API_KEY` is set. Without it, outgoing messages show a Failed delivery badge with the reason on hover.
 
+## API keys
+
+Admins create keys under **Settings → API keys**. A key is shown once, at creation, and only its
+prefix is stored afterwards; if it is lost, revoke it and create another.
+
+Keys authenticate the versioned surface only:
+
+```bash
+curl -H "Authorization: Bearer rhq_live_…" https://<your-worker>/api/v1/tickets
+```
+
+`/api/*` — the surface the browser app uses — stays session-only. A request carrying both a session
+cookie and a bearer token is refused rather than silently preferring one.
+
+Scopes are coarse: `tickets:read`, `tickets:write`, `customers:read`, `customers:write`, `kb:read`,
+`reports:read`, and `mcp:read`. Anything outside that list is unreachable with a key at all, which
+includes the assistant, privacy, automations, and workspace-administration endpoints.
+
+**A key can never do more than the person who created it.** The creating member's role is re-read on
+every request and intersected with the key's scopes, so demoting them from admin to agent
+immediately removes the admin-only powers from every key they issued — no re-issue needed. If that
+member is removed or disabled, their keys stop working and are shown as inactive in the list.
+
+Keys may optionally expire, and may be restricted to particular inboxes; a restricted key sees no
+tickets outside them, and reports a ticket it may not see as missing rather than forbidden.
+
 ### Rotating `SESSION_PEPPER`
 
 `SESSION_PEPPER` signs sessions, the optional signed reply address, and satisfaction rating links. Changing it signs everyone out **and** invalidates any rating link already sitting in a customer's inbox — those customers see "this rating link is no longer available" rather than an error. This is deliberate: a second secret would be one more thing to get wrong, and the consequence of a rotation is limited to unanswered surveys.

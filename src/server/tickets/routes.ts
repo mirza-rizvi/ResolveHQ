@@ -63,6 +63,7 @@ ticketRoutes.get("/", async (context) => {
   const assignee = context.req.query("assignee");
   const sla = context.req.query("sla");
   const snoozed = context.req.query("snoozed");
+  const apiKeyInboxes = context.get("apiKey")?.inboxIds ?? null;
   // Every queue that means "work waiting on us" hides snoozed tickets; "all" does not.
   const hidesSnoozed =
     snoozed !== "include" &&
@@ -136,6 +137,9 @@ ticketRoutes.get("/", async (context) => {
         sla === "breached" || sla === "due_soon"
           ? and(eq(tickets.slaState, sla), notInArray(tickets.status, ["resolved", "closed"]))
           : undefined,
+        // A key restricted to particular inboxes sees only those tickets, everywhere —
+        // an empty restriction list yields no rows rather than an error.
+        apiKeyInboxes ? (apiKeyInboxes.length ? inArray(tickets.inboxId, apiKeyInboxes) : sql`0`) : undefined,
         // Snoozed tickets are hidden from the working queues by the server, not by the UI,
         // so the REST API and MCP cannot disagree with the app about what is in a queue.
         // "all" and "snoozed" still show them.
@@ -330,6 +334,7 @@ ticketRoutes.get("/:id", async (context) => {
       createdAt: tickets.createdAt,
       updatedAt: tickets.updatedAt,
       version: tickets.version,
+      inboxId: tickets.inboxId,
       slaState: tickets.slaState,
       firstResponseDueAt: tickets.firstResponseDueAt,
       firstResponseAt: tickets.firstResponseAt,
@@ -345,6 +350,11 @@ ticketRoutes.get("/:id", async (context) => {
     .where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId)))
     .limit(1);
   if (!ticket) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
+  // A ticket outside a restricted key's inboxes is reported as missing, not as
+  // forbidden: the difference would confirm the ticket exists.
+  const keyInboxes = context.get("apiKey")?.inboxIds ?? null;
+  if (keyInboxes && !keyInboxes.includes(ticket.inboxId ?? ""))
+    throw new HttpError(404, "ticket_not_found", "Ticket not found.");
   const latest = context.req.query("messageWindow") === "latest";
   let before: { createdAt: number; id: string } | undefined;
   if (latest && context.req.query("messageCursor")) {

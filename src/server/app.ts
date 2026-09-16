@@ -5,6 +5,7 @@ import type { HonoEnv } from "./types";
 import { authRoutes } from "./auth/routes";
 import { organizationRoutes } from "./organizations/routes";
 import { HttpError } from "./http/errors";
+import { requireApiKey } from "./auth/api-key";
 import { customerRoutes } from "./customers/routes";
 import { ticketRoutes } from "./tickets/routes";
 import { tagRoutes } from "./tags/routes";
@@ -19,6 +20,7 @@ import { automationRoutes } from "./automations/routes";
 import { slaRoutes } from "./sla/routes";
 import { csatRoutes } from "./csat/routes";
 import { csatAdminRoutes } from "./csat/admin-routes";
+import { apiKeyRoutes } from "./api-keys/routes";
 import { privacyRoutes } from "./privacy/routes";
 import { assistantRoutes } from "./assistant/routes";
 
@@ -64,6 +66,8 @@ app.get("/api/ready", async (context) => {
   );
 });
 app.route("/api/auth", authRoutes);
+// Registered before the /api/organization mount so the more specific path wins.
+app.route("/api/organization/api-keys", apiKeyRoutes);
 app.route("/api/organization", organizationRoutes);
 app.route("/api/customers", customerRoutes);
 app.route("/api/tickets", ticketRoutes);
@@ -86,6 +90,15 @@ app.route("/api/privacy", privacyRoutes);
 app.route("/api/assistant", assistantRoutes);
 
 const v1 = new Hono<HonoEnv>();
+/**
+ * The versioned surface accepts either a browser session or an API key. /api/* stays
+ * session-only: keeping the browser surface and the programmatic surface apart is what
+ * keeps the CSRF story coherent.
+ */
+v1.use("*", async (context, next) => {
+  if (context.req.header("authorization")?.startsWith("Bearer ")) return requireApiKey(context, next);
+  return next();
+});
 v1.route("/auth", authRoutes);
 v1.route("/organization", organizationRoutes);
 v1.route("/customers", customerRoutes);
