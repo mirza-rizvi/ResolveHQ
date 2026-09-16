@@ -6,6 +6,7 @@ import { csatResponses } from "../db/schema";
 import { validate } from "../http/validate";
 import type { HonoEnv } from "../types";
 import { verifyCsatToken } from "./token";
+import { backgroundRunner, emitWebhookEvent } from "../webhooks/outbound";
 
 /**
  * The only public, unauthenticated mutation in the product.
@@ -41,7 +42,22 @@ csatRoutes.post("/:token", async (context) => {
     .where(and(eq(csatResponses.ticketId, parts.ticketId), isNull(csatResponses.consumedAt)))
     .returning({ id: csatResponses.id, rating: csatResponses.rating });
 
-  if (claimed.length) return context.json({ status: "recorded", rating: parts.rating });
+  if (claimed.length) {
+    const [owner] = await db
+      .select({ organizationId: csatResponses.organizationId, ticketId: csatResponses.ticketId })
+      .from(csatResponses)
+      .where(eq(csatResponses.id, claimed[0].id))
+      .limit(1);
+    if (owner)
+      await emitWebhookEvent(
+        context.env,
+        owner.organizationId,
+        "csat.received",
+        { ticketId: owner.ticketId, rating: parts.rating },
+        backgroundRunner(context),
+      );
+    return context.json({ status: "recorded", rating: parts.rating });
+  }
 
   // Already rated: confirm the score actually recorded rather than silently accepting
   // a different one, and stay idempotent for a customer who clicks the same link twice.

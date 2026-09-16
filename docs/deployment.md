@@ -77,6 +77,60 @@ member is removed or disabled, their keys stop working and are shown as inactive
 Keys may optionally expire, and may be restricted to particular inboxes; a restricted key sees no
 tickets outside them, and reports a ticket it may not see as missing rather than forbidden.
 
+## Outbound webhooks
+
+Admins add endpoints under **Settings → Webhooks**, choosing which of six events to send: a ticket
+opened, assigned, changed status, or missed its response target; a customer replied; a customer rated
+their support.
+
+**What a payload contains is a deliberate decision: ids, numbers, statuses and names — never message
+text, never a customer's email address, never the subject of a private note.** A consumer that needs
+the conversation reads it back through `/api/v1` with a scoped key, where the workspace's own
+permissions apply.
+
+Deliveries go out immediately and failures are retried by the existing five-minute cron with
+backoff (15s, 1m, 5m, 30m, 2h) up to six attempts. **No Cloudflare Queue is used** — the Free plan's
+10,000 daily operations are reserved for mail. An endpoint that fails ten times in a row turns itself
+off and says so in the list, with a Re-enable button.
+
+### Verifying a signature
+
+Endpoints of kind "My own service" receive a signature header; Slack and Telegram authenticate with
+their own secret URL or bot token instead. The signing secret is shown once, when you create the
+endpoint.
+
+```
+X-ResolveHQ-Signature: t=1788870600,v1=<base64url HMAC-SHA256>
+X-ResolveHQ-Event: ticket.created
+```
+
+The signed value is `"<t>.<raw request body>"`, keyed with your endpoint secret. In Node:
+
+```js
+import { createHmac } from "node:crypto";
+
+function verify(secret, header, rawBody) {
+  const [timestampPart, signaturePart] = header.split(",");
+  const timestamp = timestampPart.slice(2);
+  const provided = signaturePart.slice(3);
+  const expected = createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("base64url");
+  // Reject anything older than five minutes to stop a captured request being replayed.
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+  return provided === expected;
+}
+```
+
+Verify against the **raw** body, before parsing it: re-serialising JSON changes the bytes and the
+signature will not match.
+
+### What ResolveHQ refuses to send to
+
+Destinations are validated when you save them **and again immediately before every send**, because
+DNS can change in between. Private, loopback, carrier-grade-NAT and internal addresses are refused,
+as are bare hostnames, addresses pointing back at your own deployment, and link-local metadata
+addresses such as `169.254.169.254`. Redirects are not followed, the request times out after ten
+seconds, and only the response status is read.
+
 ## Connecting an AI assistant (MCP)
 
 ResolveHQ speaks the Model Context Protocol at `POST /api/mcp`, so Claude Code, Claude Desktop, or

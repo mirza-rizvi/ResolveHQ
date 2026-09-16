@@ -240,6 +240,48 @@ describe("Free-plan reliability", () => {
     expect(await stillSnoozed()).toBe(0);
   });
 
+  it("bounds the webhook retry sweep and uses no queue for outbound webhooks", async () => {
+    const { session } = await fixture("free-webhooks");
+    const now = Date.now();
+    await env.DB.prepare(
+      "INSERT INTO webhook_endpoints (id, organization_id, kind, url, secret, config, events, enabled, failure_count, created_at, updated_at) VALUES ('whe_free', ?, 'generic', 'https://hooks.example.com/incoming', 'whsec_free', '{}', '[\"ticket.created\"]', 1, 0, ?, ?)",
+    )
+      .bind(session.organizationId, now, now)
+      .run();
+    for (let i = 0; i < 25; i++)
+      await env.DB.prepare(
+        "INSERT INTO webhook_deliveries (id, organization_id, endpoint_id, event, payload, status, attempts, next_attempt_at, created_at, updated_at) VALUES (?, ?, 'whe_free', 'ticket.created', '{\"event\":\"ticket.created\",\"data\":{}}', 'pending', 0, ?, ?, ?)",
+      )
+        .bind(`whd_free_${i}`, session.organizationId, now - 60_000, now, now)
+        .run();
+
+    const originalFetch = globalThis.fetch;
+    let sends = 0;
+    globalThis.fetch = (async () => {
+      sends += 1;
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    try {
+      // The queue producers must stay untouched: webhooks deliberately spend no Queue
+      // operations, which are capped at 10,000 a day and shared with mail.
+      const inbound = vi.spyOn(env.INBOUND_MAIL_QUEUE, "send");
+      const outbound = vi.spyOn(env.OUTBOUND_MAIL_QUEUE, "send");
+      try {
+        await runScheduled(env);
+        expect(sends).toBe(20);
+        expect(inbound).not.toHaveBeenCalled();
+        expect(outbound).not.toHaveBeenCalled();
+      } finally {
+        inbound.mockRestore();
+        outbound.mockRestore();
+      }
+      await runScheduled(env);
+      expect(sends).toBe(25);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("loads the newest message page and walks older messages without overlap at equal timestamps", async () => {
     const { session, ticket } = await fixture("free-pages");
     for (let i = 0; i < 60; i++)

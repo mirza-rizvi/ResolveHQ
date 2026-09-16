@@ -7,6 +7,7 @@ import { newId } from "resolve-server/lib/id";
 import type { AppBindings, TenantContext } from "resolve-server/types";
 import type { TicketPriority, TicketStatus } from "resolve-shared/domain";
 import { refreshTicketTargets } from "resolve-server/sla/service";
+import { emitWebhookEvent } from "resolve-server/webhooks/outbound";
 
 export type Ticket = typeof tickets.$inferSelect;
 
@@ -124,6 +125,11 @@ export async function applyTicketUpdate(
       entityId: current.id,
       metadata: { from: current.assignedUserId, to: changes.assignedUserId },
     });
+    await emitWebhookEvent(env, tenant.organizationId, "ticket.assigned", {
+      ticketId: current.id,
+      number: current.number,
+      assignedUserId: changes.assignedUserId,
+    });
   }
   if (changes.status && changes.status !== current.status) {
     await recordActivity(db, tenant, {
@@ -132,6 +138,12 @@ export async function applyTicketUpdate(
       entityType: "ticket",
       entityId: current.id,
       metadata: { from: current.status, to: changes.status },
+    });
+    await emitWebhookEvent(env, tenant.organizationId, "ticket.status_changed", {
+      ticketId: current.id,
+      number: current.number,
+      from: current.status,
+      status: changes.status,
     });
   }
   if (changes.priority && changes.priority !== current.priority) {

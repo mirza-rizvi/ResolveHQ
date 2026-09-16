@@ -2,6 +2,7 @@ import { dispatchMail } from "../mail/reliability";
 import { applyAutomations } from "../automations/service";
 import { targetsFor } from "../sla/service";
 import { MAX_SNOOZE_MS, wakeAssignments } from "./snooze";
+import { backgroundRunner, emitWebhookEvent } from "../webhooks/outbound";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -275,6 +276,13 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
     entityId: ticketId,
     metadata: { number: numberRow.number },
   });
+  await emitWebhookEvent(
+    context.env,
+    tenant.organizationId,
+    "ticket.created",
+    { ticketId, number: numberRow.number, subject: input.subject, status: "waiting_customer", priority: input.priority },
+    backgroundRunner(context),
+  );
   await applyAutomations(context.env, tenant.organizationId, ticketId, `created:${ticketId}`);
   await dispatchMail(context.env, "outbound-mail", [outboundJobId]);
   return context.json(

@@ -2,6 +2,8 @@ import type { AppBindings } from "../types";
 import { dispatchMail, leaseMs, retryWindowMs } from "../mail/reliability";
 import { discoverCleanup, dispatchMaintenance } from "./service";
 import { enforceTicketRetention } from "./retention";
+import { emitWebhookEvent } from "../webhooks/outbound";
+import { retryDueWebhooks } from "../webhooks/outbound";
 
 export async function runScheduled(env: AppBindings) {
   const now = Date.now();
@@ -48,12 +50,52 @@ export async function runScheduled(env: AppBindings) {
       "UPDATE tickets SET sla_state = 'breached' WHERE id IN (SELECT id FROM tickets WHERE sla_state IN ('ok','due_soon') AND snoozed_until IS NULL AND first_response_at IS NULL AND first_response_due_at IS NOT NULL AND status NOT IN ('resolved','closed') AND first_response_due_at < ? ORDER BY first_response_due_at LIMIT 20)",
     ).bind(now),
   ]);
+  // Delivered and abandoned rows are swept here rather than through a maintenance task:
+  // this is the highest-volume new table in the release and would otherwise grow without
+  // bound. Bounded like every other statement in this file.
+  await env.DB.prepare(
+    "DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE status IN ('delivered','abandoned') AND updated_at < ? ORDER BY updated_at LIMIT 20)",
+  )
+    .bind(now - 7 * 86400000)
+    .run();
+  await announceSlaBreaches(env);
+  await retryDueWebhooks(env, now);
   await recoverMissingOutbox(env, now);
   await dispatchMail(env, "inbound-mail");
   await dispatchMail(env, "outbound-mail");
   await discoverCleanup(env);
   await enforceTicketRetention(env);
   await dispatchMaintenance(env);
+}
+
+/**
+ * Emits ticket.sla_breached for tickets the sweep above just promoted.
+ *
+ * The flag lives on the ticket rather than in a side table: `sla_breach_notified_at` is
+ * set in the same statement that reads the rows, so a breach is announced exactly once
+ * even if this run and the next overlap.
+ */
+async function announceSlaBreaches(env: AppBindings) {
+  const breached = await env.DB.prepare(
+    "UPDATE tickets SET sla_breach_notified_at = ? WHERE id IN (SELECT id FROM tickets WHERE sla_state = 'breached' AND sla_breach_notified_at IS NULL ORDER BY first_response_due_at LIMIT 20) RETURNING id, organization_id AS organizationId, number, subject, priority, first_response_due_at AS firstResponseDueAt",
+  )
+    .bind(Date.now())
+    .all<{
+      id: string;
+      organizationId: string;
+      number: number;
+      subject: string;
+      priority: string;
+      firstResponseDueAt: number | null;
+    }>();
+  for (const ticket of breached.results)
+    await emitWebhookEvent(env, ticket.organizationId, "ticket.sla_breached", {
+      ticketId: ticket.id,
+      number: ticket.number,
+      subject: ticket.subject,
+      priority: ticket.priority,
+      firstResponseDueAt: ticket.firstResponseDueAt,
+    });
 }
 
 /** Walk twenty queued candidates, including ones with jobs, instead of scanning a whole backlog for gaps. */

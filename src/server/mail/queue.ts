@@ -24,6 +24,7 @@ import { buildActivityRow } from "../activity/service";
 import { targetsFor } from "../sla/service";
 import { wakeAssignments } from "../tickets/snooze";
 import { claimSurvey, readCsatSettings, renderSurvey } from "../csat/service";
+import { emitWebhookEvent } from "../webhooks/outbound";
 import type { AppBindings } from "../types";
 
 const maximumRawMailSize = 25 * 1024 * 1024;
@@ -333,6 +334,7 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       );
 
     const messageId = newMessageId;
+    const createdTicket = ticketWrites.length > 0;
     // Read before the write so the ledger can record that the reply is what woke it.
     const snoozedBefore = await env.DB.prepare(
       "SELECT snoozed_until AS snoozedUntil FROM tickets WHERE organization_id = ? AND id = ?",
@@ -492,6 +494,22 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
         lastError: null,
       })
       .where(eq(inboundMailEvents.id, eventId));
+    // No execution context inside a queue consumer, so the delivery row is written and
+    // the cron picks it up: delayed, never lost.
+    if (createdTicket)
+      await emitWebhookEvent(env, organizationId, "ticket.created", {
+        ticketId: ticket.id,
+        number: ticket.number,
+        subject: ticket.subject,
+        status: "open",
+        priority: "normal",
+      });
+    await emitWebhookEvent(env, organizationId, "message.received", {
+      ticketId: ticket.id,
+      number: ticket.number,
+      messageId,
+      customerId: customer.id,
+    });
     await applyAutomations(env, organizationId, ticket.id, `inbound:${mail.providerMessageId}`);
     if (staged) await env.ATTACHMENTS.delete(payload.stagingObjectKey);
   } catch (error) {

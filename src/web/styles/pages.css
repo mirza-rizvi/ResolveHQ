@@ -1931,3 +1931,89 @@
     flex-direction: column;
   }
 }
+
+/* Webhooks — endpoint list with per-endpoint health. */
+.webhook-list {
+  display: grid;
+  gap: 8px;
+}
+.webhook-list article {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 11px 13px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.webhook-list article.webhook-off {
+  opacity: 0.75;
+  border-style: dashed;
+}
+.webhook-list article > div:first-child {
+  min-width: 0;
+}
+.webhook-list strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 12px;
+}
+.webhook-list small {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--quiet);
+  font-size: 11px;
+}
+.webhook-health.webhook-good {
+  color: var(--badge-green-ink);
+}
+.webhook-health.webhook-warn {
+  color: var(--badge-amber-ink);
+}
+.webhook-health.webhook-bad {
+  color: var(--badge-red-ink);
+}
+.webhook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.webhook-form {
+  display: grid;
+  gap: 12px;
+}
+.webhook-form fieldset {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.webhook-form legend {
+  padding: 0 4px;
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.webhook-form fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+@media (max-width: 640px) {
+  .webhook-list article {
+    flex-direction: column;
+  }
+}

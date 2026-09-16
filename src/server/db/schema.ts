@@ -229,6 +229,8 @@ export const tickets = sqliteTable(
     firstResponseAt: integer("first_response_at", { mode: "timestamp_ms" }),
     /** Denormalized so the Overdue queue is an index lookup rather than business-hours arithmetic per row. */
     slaState: text("sla_state", { enum: slaStates }).notNull().default("none"),
+    /** Set when the breach webhook fires, so a breach is announced exactly once. */
+    slaBreachNotifiedAt: integer("sla_breach_notified_at", { mode: "timestamp_ms" }),
     snoozedUntil: integer("snoozed_until", { mode: "timestamp_ms" }),
     snoozeReason: text("snooze_reason"),
     /** When the current snooze began, so the pause is exact even when the cron runs late. */
@@ -752,6 +754,75 @@ export const apiKeys = sqliteTable(
   (table) => [
     uniqueIndex("api_keys_hash_uidx").on(table.keyHash),
     index("api_keys_org_revoked_idx").on(table.organizationId, table.revokedAt),
+  ],
+);
+
+export const webhookEvents = [
+  "ticket.created",
+  "ticket.assigned",
+  "ticket.status_changed",
+  "ticket.sla_breached",
+  "message.received",
+  "csat.received",
+] as const;
+
+export const webhookKinds = ["generic", "slack", "telegram"] as const;
+
+export const webhookEndpoints = sqliteTable(
+  "webhook_endpoints",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: webhookKinds }).notNull().default("generic"),
+    url: text("url").notNull(),
+    /** Signs `generic` deliveries. Shown once at creation, like an API key. */
+    secret: text("secret").notNull(),
+    /**
+     * Per-kind settings — for Telegram, the bot token and chat id. Per workspace in D1
+     * rather than a Worker secret, which would make every workspace share one bot.
+     */
+    config: text("config", { mode: "json" }).$type<Record<string, string>>().notNull().default({}),
+    events: text("events", { mode: "json" }).$type<string[]>().notNull().default([]),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** Consecutive failures. Reset on any success; at ten the endpoint disables itself. */
+    failureCount: integer("failure_count").notNull().default(0),
+    disabledAt: integer("disabled_at", { mode: "timestamp_ms" }),
+    lastSuccessAt: integer("last_success_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    ...timestamps,
+  },
+  (table) => [index("webhook_endpoints_org_enabled_idx").on(table.organizationId, table.enabled)],
+);
+
+export const webhookDeliveries = sqliteTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    endpointId: text("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+    event: text("event").notNull(),
+    payload: text("payload").notNull(),
+    status: text("status", { enum: ["pending", "delivered", "failed", "abandoned"] })
+      .notNull()
+      .default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
+    responseCode: integer("response_code"),
+    lastError: text("last_error"),
+    ...timestamps,
+  },
+  (table) => [
+    // Deliberately NOT organization-scoped: the cron sweep is global across tenants and
+    // must find due deliveries without scanning per organization. Every request-
+    // originated query still filters on organization_id.
+    index("webhook_deliveries_retry_idx").on(table.status, table.nextAttemptAt),
+    index("webhook_deliveries_org_endpoint_idx").on(table.organizationId, table.endpointId, table.createdAt),
   ],
 );
 
