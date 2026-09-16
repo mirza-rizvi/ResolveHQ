@@ -25,6 +25,8 @@ interface DashboardData {
     eventType: string;
     ticketId: string | null;
     actorName: string | null;
+    actorType: string;
+    actorLabel: string | null;
     createdAt: string;
   }>;
 }
@@ -113,7 +115,7 @@ export function DashboardPage() {
                   <span className="status-pin" />
                   <div>
                     <strong>{activityLabel(event.eventType)}</strong>
-                    <small>{event.actorName ?? "System"}</small>
+                    <ActorLine actorType={event.actorType} actorLabel={event.actorLabel} actorName={event.actorName} />
                   </div>
                   <time>{relativeTime(event.createdAt)}</time>
                 </Link>
@@ -122,7 +124,7 @@ export function DashboardPage() {
                   <span className="status-pin" />
                   <div>
                     <strong>{activityLabel(event.eventType)}</strong>
-                    <small>{event.actorName ?? "System"}</small>
+                    <ActorLine actorType={event.actorType} actorLabel={event.actorLabel} actorName={event.actorName} />
                   </div>
                   <time>{relativeTime(event.createdAt)}</time>
                 </div>
@@ -132,6 +134,38 @@ export function DashboardPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+const actorTypeLabels: Record<string, string> = {
+  customer: "Customer",
+  automation: "Automation",
+  ai: "AI",
+  api_key: "API key",
+  system: "System",
+};
+
+/**
+ * Human entries keep their existing appearance. Non-human actors get a chip so an
+ * automation, an AI suggestion or an API-key call is never mistaken for a colleague —
+ * and never renders as an unknown user when no person is attached.
+ */
+function ActorLine({
+  actorType,
+  actorLabel,
+  actorName,
+}: {
+  actorType: string;
+  actorLabel: string | null;
+  actorName: string | null;
+}) {
+  const chip = actorTypeLabels[actorType];
+  if (!chip) return <small>{actorName ?? "System"}</small>;
+  return (
+    <small>
+      <span className="activity-actor">{chip}</span>
+      {actorLabel ?? actorName ?? ""}
+    </small>
   );
 }
 

@@ -4,7 +4,12 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+- Activity entries now record what kind of actor caused them. An automation rule, an AI suggestion, an API-key request, an inbound customer email, and a scheduled job are each distinguishable from a person acting in the app, and the dashboard activity feed labels the non-human ones. Entries caused by an automation show the rule's name rather than an unknown user.
+
 ### Changed
+- Activity metadata is filtered before it is stored. A fixed list of sensitive keys — including subjects, message bodies, email addresses, filenames, passwords, tokens, and secrets — is dropped at the single write path, and the entry records which keys were removed. The activity ledger is not covered by customer erasure, so nothing personal should reach it in the first place.
+- `npm run lint` no longer fails when a local checkout contains unrelated project clones under `docs/`. ESLint 10 walks nested directories looking for configuration files; that path is now ignored.
 - Applied the open Dependabot updates: Hono, Zod, Tiptap, React 19.3, Playwright, and TypeScript ESLint bumped to their latest minor/patch; `@testing-library/jest-dom` to 7.0.1; `lucide-react` to 1.x (major, icon names unchanged); ESLint to 10 with `eslint-plugin-react-hooks` 7 (adds React Compiler lint rules; `set-state-in-effect` and `refs` kept at warn pending a follow-up cleanup pass); GitHub Actions `actions/checkout`/`actions/setup-node` to v7 and `cloudflare/wrangler-action` to v4 (Wrangler version pin unchanged).
 
 ## [0.2.0] - 2026-09-14

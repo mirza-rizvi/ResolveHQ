@@ -20,6 +20,7 @@ import { PostalMimeIncomingProvider } from "../providers/mail";
 import { refreshTicketSearch } from "../search/index";
 import { selectOutgoingProvider } from "./system";
 import { applyAutomations } from "../automations/service";
+import { buildActivityRow } from "../activity/service";
 import type { AppBindings } from "../types";
 
 const maximumRawMailSize = 25 * 1024 * 1024;
@@ -304,15 +305,18 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
 
     if (ticketWrites.length)
       ticketWrites.push(
-        db.insert(activityLogs).values({
-          id: newId("act"),
-          organizationId,
-          ticketId: ticket.id,
-          eventType: "ticket.created_from_email",
-          entityType: "ticket",
-          entityId: ticket.id,
-          metadata: {},
-        }),
+        db.insert(activityLogs).values(
+          buildActivityRow(
+            { organizationId },
+            {
+              ticketId: ticket.id,
+              eventType: "ticket.created_from_email",
+              entityType: "ticket",
+              entityId: ticket.id,
+              actorType: "customer",
+            },
+          ),
+        ),
       );
 
     const messageId = newMessageId;

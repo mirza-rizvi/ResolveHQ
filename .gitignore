@@ -28,6 +28,7 @@ AGENTS.md
 # Agent workflow artifacts
 .superpowers/
 docs/superpowers/
+docs/improvement-ideas-from-others/
 .claude/
 .cursor/
 .windsurf/

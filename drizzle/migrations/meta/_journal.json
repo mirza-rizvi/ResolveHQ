@@ -64,6 +64,13 @@
       "when": 1788863400000,
       "tag": "0008_outbound_send_marker",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788865200000,
+      "tag": "0009_activity_actor_types",
+      "breakpoints": true
     }
   ]
 }

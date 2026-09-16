@@ -607,6 +607,8 @@ export const savedReplies = sqliteTable(
   (table) => [index("saved_replies_organization_category_idx").on(table.organizationId, table.category)],
 );
 
+export const activityActorTypes = ["user", "customer", "automation", "ai", "api_key", "system"] as const;
+
 export const activityLogs = sqliteTable(
   "activity_logs",
   {
@@ -616,6 +618,12 @@ export const activityLogs = sqliteTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     ticketId: text("ticket_id").references(() => tickets.id, { onDelete: "cascade" }),
     actorUserId: text("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    /** What kind of actor produced this entry. Display and filtering only; never authorization. */
+    actorType: text("actor_type", { enum: activityActorTypes })
+      .notNull()
+      .default("user"),
+    /** Display-only label for a non-human actor: a rule name, a model id, an API key name. */
+    actorLabel: text("actor_label"),
     eventType: text("event_type").notNull(),
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id").notNull(),
@@ -628,6 +636,7 @@ export const activityLogs = sqliteTable(
   (table) => [
     index("activity_logs_organization_created_idx").on(table.organizationId, table.createdAt),
     index("activity_logs_organization_ticket_idx").on(table.organizationId, table.ticketId),
+    index("activity_logs_org_actor_type_idx").on(table.organizationId, table.actorType, table.createdAt),
   ],
 );
 

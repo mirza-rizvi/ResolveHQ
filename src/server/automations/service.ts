@@ -1,8 +1,8 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { activityLogs } from "../db/schema";
+import { buildActivityRow } from "../activity/service";
 import { createDb } from "../db";
-import { automationRules, automationRuns, customers, notifications, tags, ticketTags, tickets } from "../db/schema";
+import { activityLogs, automationRules, automationRuns, customers, notifications, tags, ticketTags, tickets } from "../db/schema";
 import { newId } from "../lib/id";
 import { assertActiveMember } from "../tickets/service";
 import type { AppBindings } from "../types";
@@ -107,17 +107,20 @@ export async function applyAutomations(
             .set({ priority: action.priority, version: sql`${tickets.version} + 1`, updatedAt: now })
             .where(and(eq(tickets.id, ticketId), eq(tickets.organizationId, organizationId)));
           state.ticket = { ...state.ticket, priority: action.priority };
-          await db.insert(activityLogs).values({
-            id: newId("act"),
-            organizationId,
-            ticketId,
-            actorUserId: null,
-            eventType: "automation.priority_changed",
-            entityType: "ticket",
-            entityId: ticketId,
-            metadata: { rule: rule.name, to: action.priority },
-            requestId: "automation",
-          });
+          await db.insert(activityLogs).values(
+            buildActivityRow(
+              { organizationId, requestId: "automation" },
+              {
+                ticketId,
+                eventType: "automation.priority_changed",
+                entityType: "ticket",
+                entityId: ticketId,
+                metadata: { rule: rule.name, to: action.priority },
+                actorType: "automation",
+                actorLabel: rule.name,
+              },
+            ),
+          );
           applied.push(`priority:${action.priority}`);
         } else if (action.type === "set_status" && state.ticket.status !== action.status) {
           await db

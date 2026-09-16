@@ -28,7 +28,8 @@ Cron ───────────> outbox reconciliation, expired sessions/
 - `src/server/auth`: passwords, sessions, CSRF, and rate limiting.
 - `src/server/organizations`: organizations, memberships, invitations, and roles.
 - `src/server/customers`: customer profiles and history.
-- `src/server/tickets`: tickets, messages, notes, assignment, tags, and activity.
+- `src/server/tickets`: tickets, messages, notes, assignment, and tags.
+- `src/server/activity`: the single write path for the activity ledger. Records which kind of actor produced each entry (`user`, `customer`, `automation`, `ai`, `api_key`, `system`) and strips a denylist of sensitive top-level metadata keys before the row is stored.
 - `src/server/attachments`: validated uploads and authorized downloads.
 - `src/server/search`: tenant-scoped ticket and message search.
 - `src/server/knowledge-base`: internal articles plus the public help center; drafts never leave the tenant.

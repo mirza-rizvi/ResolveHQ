@@ -164,6 +164,18 @@
   color: var(--quiet);
   font-size: 10px;
 }
+.activity-actor {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  color: var(--quiet);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
 .activity-ledger time {
   color: var(--quiet);
   font-size: 10px;

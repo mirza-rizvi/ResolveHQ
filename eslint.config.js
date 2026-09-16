@@ -4,7 +4,19 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "node_modules/**", "test-results/**", "playwright-report/**", ".wrangler/**", "coverage/**"] },
+  {
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "test-results/**",
+      "playwright-report/**",
+      ".wrangler/**",
+      "coverage/**",
+      // Read-only study clones of other projects. ESLint 10 otherwise walks in
+      // and loads their own nested configs, which reference packages we do not install.
+      "docs/improvement-ideas-from-others/**",
+    ],
+  },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {

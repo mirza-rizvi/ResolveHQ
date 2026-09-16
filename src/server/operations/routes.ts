@@ -45,7 +45,7 @@ operationRoutes.get("/dashboard", async (context) => {
     .bind(tenant.organizationId)
     .all();
   const recentActivity = await context.env.DB.prepare(
-    "SELECT a.id, a.event_type AS eventType, a.ticket_id AS ticketId, a.created_at AS createdAt, u.name AS actorName FROM activity_logs a LEFT JOIN users u ON u.id = a.actor_user_id WHERE a.organization_id = ? ORDER BY a.created_at DESC LIMIT 12",
+    "SELECT a.id, a.event_type AS eventType, a.ticket_id AS ticketId, a.created_at AS createdAt, a.actor_type AS actorType, a.actor_label AS actorLabel, u.name AS actorName FROM activity_logs a LEFT JOIN users u ON u.id = a.actor_user_id WHERE a.organization_id = ? ORDER BY a.created_at DESC LIMIT 12",
   )
     .bind(tenant.organizationId)
     .all();
