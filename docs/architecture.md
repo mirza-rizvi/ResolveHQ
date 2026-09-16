@@ -34,6 +34,7 @@ Cron ───────────> outbox reconciliation, expired sessions/
 - `src/server/search`: tenant-scoped ticket and message search.
 - `src/server/knowledge-base`: internal articles plus the public help center; drafts never leave the tenant.
 - `src/server/reports`: tenant-scoped window metrics and formula-safe CSV export.
+- `src/server/operations`: the dashboard, saved views, drafts, notifications, bulk updates, and the deployment readiness checks. Readiness resolves DNS over HTTPS rather than through the Cloudflare API, so it needs no API token, and caches its report in a per-organization `settings` row.
 - `src/server/automations`: ordered rule matching with per-event deduplication.
 - `src/server/privacy`: customer export, durable erasure, and ticket deletion with mail-cancellation guards.
 - `src/server/assistant`: optional AI summarize, draft, and classification behind the provider seam.

@@ -36,6 +36,7 @@ More screenshots, including the mobile view and the customer and settings pages,
 - Notify agents of assignments and customer replies in-app, and work comfortably in light or dark mode.
 - Export everything stored about a customer as JSON, or erase it with a durable, resumable workflow that cancels queued mail.
 - Recover automatically: a five-minute cron job retries stalled mail jobs and cleans up staging and orphaned data.
+- Check whether your deployment actually works: a setup page verifies configuration and looks up the MX, SPF, DKIM, and DMARC records for your inbox domains, telling you what to change when something is missing.
 - Control AI assistance per workspace: it stays off until an admin enables it in Settings, and only then are ticket conversations sent to the configured provider.
 - Set `TICKET_RETENTION_DAYS` (for example `365`) to have the scheduled sweep permanently delete resolved and closed tickets older than that window, including attachments.
 

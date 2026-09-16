@@ -1261,3 +1261,165 @@
   justify-content: flex-end;
   margin-top: 18px;
 }
+
+/* Setup readiness — the /setup page and the settings health card share these. */
+.setup-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  color: var(--badge-amber-ink);
+  background: var(--badge-amber-bg);
+  border-bottom: 1px solid currentColor;
+  font-size: 12px;
+}
+.setup-banner p {
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+}
+.setup-banner a {
+  color: var(--link);
+  font-weight: 700;
+}
+.setup-banner a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.setup-banner button {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.setup-banner button:hover {
+  background: var(--surface-sunken);
+}
+.readiness {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.readiness-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.readiness-toolbar p {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 11px;
+}
+.readiness-group {
+  display: grid;
+  gap: 8px;
+}
+.readiness-group h3 {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.readiness-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 11px 13px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.readiness-row strong {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 12px;
+}
+.readiness-row p {
+  margin: 4px 0 0;
+  color: var(--quiet);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.readiness-row code {
+  display: block;
+  margin-top: 6px;
+  padding: 4px 6px;
+  overflow-wrap: anywhere;
+  color: var(--quiet);
+  background: var(--surface-sunken);
+  border-radius: 4px;
+  font-size: 10px;
+}
+.readiness-advisory {
+  padding: 1px 5px;
+  color: var(--badge-neutral-ink);
+  background: var(--badge-neutral-bg);
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.readiness-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+.readiness-status {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+.readiness-status a {
+  color: var(--link);
+  font-weight: 700;
+}
+.readiness-row.status-ready .readiness-dot {
+  color: var(--badge-green-ink);
+  background: var(--badge-green-bg);
+}
+.readiness-row.status-degraded .readiness-dot {
+  color: var(--badge-amber-ink);
+  background: var(--badge-amber-bg);
+}
+.readiness-row.status-failed .readiness-dot {
+  color: var(--badge-red-ink);
+  background: var(--badge-red-bg);
+}
+.readiness-row.status-unknown .readiness-dot {
+  color: var(--badge-neutral-ink);
+  background: var(--badge-neutral-bg);
+}
+.readiness-row.status-failed {
+  border-color: var(--badge-red-ink);
+}
+@media (max-width: 640px) {
+  .readiness-row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+  .readiness-status {
+    grid-column: 2;
+    justify-items: start;
+    text-align: left;
+  }
+}

@@ -20,6 +20,7 @@ const DashboardPage = lazy(() => import("./pages/dashboard").then((module) => ({
 const CustomersPage = lazy(() => import("./pages/customers").then((module) => ({ default: module.CustomersPage })));
 const TeamPage = lazy(() => import("./pages/team").then((module) => ({ default: module.TeamPage })));
 const SettingsPage = lazy(() => import("./pages/settings").then((module) => ({ default: module.SettingsPage })));
+const SetupPage = lazy(() => import("./pages/setup").then((module) => ({ default: module.SetupPage })));
 const KnowledgeBasePage = lazy(() =>
   import("./pages/knowledge-base").then((module) => ({ default: module.KnowledgeBasePage })),
 );
@@ -68,6 +69,7 @@ const router = createBrowserRouter([
           { path: "/automations", element: deferred(<AutomationsPage />) },
           { path: "/team", element: deferred(<TeamPage />) },
           { path: "/settings", element: deferred(<SettingsPage />) },
+          { path: "/setup", element: deferred(<SetupPage />) },
         ],
       },
     ],

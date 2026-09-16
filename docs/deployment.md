@@ -47,8 +47,11 @@ Both must be set together: the server only exposes the site key from `GET /api/a
 
 1. Open your deployed ResolveHQ URL and sign up: name, email, workspace, and an optional support email. The support email becomes your default inbox.
 2. In the Cloudflare dashboard, go to Email Routing and add a rule sending your support address to the `resolvehq` Worker.
-3. Send a test email to that address. It should appear in the inbox shortly after.
-4. Replies go out through Resend once `RESEND_API_KEY` is set. Without it, outgoing messages show a Failed delivery badge with the reason on hover.
+3. Open **/setup** (or **Settings → Setup & health**) and work through the checklist. It checks your deployment's configuration and looks up the MX, SPF, DKIM, and DMARC records of every domain your inboxes use, over DNS-over-HTTPS. Each row says what was found and what to change; nothing on the page blocks you from using ResolveHQ meanwhile.
+4. Send a test email to that address. It should appear in the inbox shortly after.
+5. Replies go out through Resend once `RESEND_API_KEY` is set. Without it, outgoing messages show a Failed delivery badge with the reason on hover.
+
+The readiness checks need no API token: they use the public `cloudflare-dns.com` resolver, so they work on a fresh deployment with nothing else configured. Results are cached per workspace for ten minutes; **Re-check** bypasses the cache. A DMARC record is reported as optional, and a resolver that cannot be reached is reported as unknown rather than as a missing record.
 
 ## Resend webhooks
 

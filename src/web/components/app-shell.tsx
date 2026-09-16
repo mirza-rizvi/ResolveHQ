@@ -23,6 +23,7 @@ import { useDialogFocus } from "@/web/hooks/use-dialog-focus";
 import { api, errorMessage } from "@/web/lib/api";
 import { Button } from "./ui";
 import { useToast } from "./toast";
+import { SetupBanner } from "./setup-banner";
 import { chordPending, consumeChord, startChord } from "@/web/lib/chord";
 
 const navigation = [
@@ -333,6 +334,7 @@ export function AppShell() {
       </aside>
       <div className="rail-page">
         <main className="workspace" inert={railOpen || undefined}>
+          <SetupBanner />
           <Outlet />
         </main>
         <nav className="mobile-navigation" aria-label="Mobile navigation">

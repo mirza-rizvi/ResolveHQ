@@ -9,6 +9,7 @@ import { HttpError } from "../http/errors";
 import { validate } from "../http/validate";
 import { newId } from "../lib/id";
 import { assertActiveMember, assertTeam, type TicketChanges } from "../tickets/service";
+import { evaluateReadiness, readReadinessCache, writeReadinessCache } from "./readiness";
 import type { HonoEnv } from "../types";
 import { roleRank, ticketPriorities, ticketStatuses } from "../../shared/domain";
 
@@ -322,6 +323,27 @@ operationRoutes.post(
     return context.json(await applyBulkUpdate(context.env, tenant, input.ticketIds, changes));
   },
 );
+
+/**
+ * Reports whether this deployment can actually send and receive mail.
+ *
+ * Informational only — nothing else in the product may gate an action on the result.
+ * A false red that blocked work would be worse than no checklist.
+ */
+operationRoutes.get("/readiness", requireRole("admin"), async (context) => {
+  const tenant = context.get("tenant");
+  const refresh = context.req.query("refresh") === "1";
+  if (!refresh) {
+    const cached = await readReadinessCache(context.env, tenant.organizationId);
+    if (cached) return context.json({ ...cached, cached: true });
+  }
+  // The refresh path makes outbound DNS queries, so it is rate limited per user.
+  if (refresh && !(await context.env.WRITE_RATE_LIMIT.limit({ key: `readiness:${tenant.userId}` })).success)
+    throw new HttpError(429, "rate_limited", "Too many re-checks. Wait a moment and try again.");
+  const report = await evaluateReadiness(context.env, tenant.organizationId);
+  await writeReadinessCache(context.env, tenant.organizationId, report);
+  return context.json({ ...report, cached: false });
+});
 
 operationRoutes.get("/dev-mail", requireRole("admin"), async (context) => {
   if (context.env.DEV_MAIL_MODE !== "capture" || context.env.RESEND_API_KEY)
