@@ -1,12 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 test("owner can open the seeded support inbox across desktop and mobile", async ({ page }, testInfo) => {
-  await page.goto("/login");
-  await expect(page.getByRole("heading", { name: "Sign in to ResolveHQ" })).toBeVisible();
-  await page.getByLabel("Email").fill("owner@northstarlabs.test");
-  await page.getByLabel("Password").fill("resolve-demo-2026");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/inbox/);
+  // The session comes from the shared sign-in in auth.setup.ts.
+  await page.goto("/inbox");
   await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
   await expect(page.getByText("Webhook deliveries retrying indefinitely", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Resolve", exact: true })).toBeVisible();
@@ -36,10 +32,7 @@ test("owner can open the seeded support inbox across desktop and mobile", async 
 });
 
 test("agent can reply, see delivery state, and create a ticket", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("owner@northstarlabs.test");
-  await page.getByLabel("Password").fill("resolve-demo-2026");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.goto("/inbox");
   await page.getByText("Webhook deliveries retrying indefinitely", { exact: true }).first().click();
   await page.getByLabel("Reply message").fill("Thanks — looking into this now.");
   await page.getByRole("button", { name: "Send reply" }).click();

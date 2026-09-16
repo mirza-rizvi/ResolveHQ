@@ -34,3 +34,6 @@ docs/improvement-ideas-from-others/
 .windsurf/
 .aider*
 *.original.md
+
+# Playwright sign-in state, regenerated each run
+e2e/.auth/

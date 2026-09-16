@@ -77,6 +77,28 @@ member is removed or disabled, their keys stop working and are shown as inactive
 Keys may optionally expire, and may be restricted to particular inboxes; a restricted key sees no
 tickets outside them, and reports a ticket it may not see as missing rather than forbidden.
 
+## Connecting an AI assistant (MCP)
+
+ResolveHQ speaks the Model Context Protocol at `POST /api/mcp`, so Claude Code, Claude Desktop, or
+Cursor can look things up in your helpdesk directly.
+
+**It is read-only.** The five tools — `search_tickets`, `get_ticket`, `list_queues`, `get_customer`,
+`search_knowledge_base` — can search and read, and there is no tool that replies, assigns, or
+changes anything. Write tools need a human approval screen, which is planned for a later release.
+
+Create an API key with the **Connect an AI assistant (MCP)** permission, then open
+**Settings → AI assistants (MCP)**, paste the key, and copy the snippet for your client. For Claude
+Code that is:
+
+```bash
+claude mcp add resolvehq --transport http https://<your-worker>/api/mcp \
+  --header "Authorization: Bearer rhq_live_…"
+```
+
+The workspace always comes from the key: no tool accepts an organization id, and a key restricted to
+particular inboxes sees nothing outside them. Long message threads and article bodies are truncated,
+and the response says when that happened.
+
 ### Rotating `SESSION_PEPPER`
 
 `SESSION_PEPPER` signs sessions, the optional signed reply address, and satisfaction rating links. Changing it signs everyone out **and** invalidates any rating link already sitting in a customer's inbox — those customers see "this rating link is no longer available" rather than an error. This is deliberate: a second secret would be one more thing to get wrong, and the consequence of a rotation is limited to unanswered surveys.

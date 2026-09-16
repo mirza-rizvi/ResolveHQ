@@ -27,11 +27,7 @@ test("administrator reviews stopped mail on desktop and mobile", async ({ page }
       },
     }),
   );
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("owner@northstarlabs.test");
-  await page.getByLabel("Password").fill("resolve-demo-2026");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/inbox/);
+  // The session comes from the shared sign-in in auth.setup.ts.
   await page.goto("/settings");
   const section = page
     .locator("section")

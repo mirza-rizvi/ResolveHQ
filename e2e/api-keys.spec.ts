@@ -1,17 +1,44 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, request as apiRequest, test, type Page } from "@playwright/test";
 
-// One sign-in per file: the Worker allows ten sign-ins a minute from one address.
+// Key names are unique per run, so a rerun against a database that was not reset does
+// not match two rows with the same name.
+const runId = Date.now().toString(36);
+
+/**
+ * The API-keys section renders nothing until its own fetch resolves, so a bare
+ * getByLabel("Name") can land on the inbox form instead. Always scope to the section,
+ * and wait for it.
+ */
+function apiKeySection(target: Page) {
+  return target.locator("section").filter({ has: target.getByRole("heading", { name: "API keys" }) });
+}
+
+async function createKeyThroughUi(target: Page, name: string, extraScope?: string) {
+  const section = apiKeySection(target);
+  await expect(section).toBeVisible();
+  await section.getByLabel("Name").fill(name);
+  if (extraScope) await section.getByLabel(extraScope).check();
+  await section.getByRole("button", { name: "Create key" }).click();
+  const dialog = target.getByRole("dialog", { name: "Your new API key" });
+  // Surface a server-side refusal instead of timing out on a dialog that never opens.
+  await expect(dialog.or(target.locator(".form-error"))).toBeVisible();
+  const value = await dialog.locator("code").innerText();
+  await dialog.getByRole("button", { name: "I have saved it" }).click();
+  return value;
+}
+
+/** A request context with no cookies: a bearer key must never ride a browser session. */
+async function bearerContext() {
+  return apiRequest.newContext({ storageState: undefined });
+}
+
+// One page for the whole file; the session comes from the shared sign-in in auth.setup.ts.
 test.describe.configure({ mode: "serial" });
 
 let page: Page;
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("owner@northstarlabs.test");
-  await page.getByLabel("Password").fill("resolve-demo-2026");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/inbox/);
 });
 
 test.afterAll(async () => {
@@ -23,9 +50,11 @@ test("a key is revealed once, behind a dialog that cannot be dismissed by accide
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "API keys" })).toBeVisible();
 
-  await page.getByLabel("Name").last().fill("Playwright key");
-  await page.getByLabel("Read reports").check();
-  await page.getByRole("button", { name: "Create key" }).click();
+  const section = apiKeySection(page);
+  await expect(section).toBeVisible();
+  await section.getByLabel("Name").fill(`Playwright key ${runId}`);
+  await section.getByLabel("Read reports").check();
+  await section.getByRole("button", { name: "Create key" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Your new API key" });
   await expect(dialog).toBeVisible();
@@ -41,19 +70,16 @@ test("a key is revealed once, behind a dialog that cannot be dismissed by accide
   await expect(dialog).toBeHidden();
 
   // Afterwards only the prefix is shown, never the key.
-  const row = page.locator(".api-key-list article").filter({ hasText: "Playwright key" });
+  const row = page.locator(".api-key-list article").filter({ hasText: `Playwright key ${runId}` });
   await expect(row).toBeVisible();
   await expect(row).toContainText(revealed.slice(0, 12));
   await expect(page.locator("body")).not.toContainText(revealed);
 });
 
-test("the key authenticates /api/v1 and nothing outside its scopes", async ({ request: api }) => {
+test("the key authenticates /api/v1 and nothing outside its scopes", async () => {
+  const api = await bearerContext();
   await page.goto("/settings");
-  await page.getByLabel("Name").last().fill("Scoped key");
-  await page.getByRole("button", { name: "Create key" }).click();
-  const dialog = page.getByRole("dialog", { name: "Your new API key" });
-  const key = await dialog.locator("code").innerText();
-  await dialog.getByRole("button", { name: "I have saved it" }).click();
+  const key = await createKeyThroughUi(page, `Scoped key ${runId}`);
 
   // A bare bearer request, with no cookies at all — the way a script would call it.
   const tickets = await api.get("http://localhost:5173/api/v1/tickets", {
@@ -73,15 +99,13 @@ test("the key authenticates /api/v1 and nothing outside its scopes", async ({ re
     headers: { authorization: `Bearer ${key}` },
   });
   expect(appSurface.status()).toBe(401);
+  await api.dispose();
 });
 
-test("a revoked key stops working immediately", async ({ request: api }) => {
+test("a revoked key stops working immediately", async () => {
+  const api = await bearerContext();
   await page.goto("/settings");
-  await page.getByLabel("Name").last().fill("Doomed key");
-  await page.getByRole("button", { name: "Create key" }).click();
-  const dialog = page.getByRole("dialog", { name: "Your new API key" });
-  const key = await dialog.locator("code").innerText();
-  await dialog.getByRole("button", { name: "I have saved it" }).click();
+  const key = await createKeyThroughUi(page, `Doomed key ${runId}`);
 
   const before = await api.get("http://localhost:5173/api/v1/tickets", {
     headers: { authorization: `Bearer ${key}` },
@@ -91,22 +115,25 @@ test("a revoked key stops working immediately", async ({ request: api }) => {
   page.once("dialog", (confirmation) => void confirmation.accept());
   await page
     .locator(".api-key-list article")
-    .filter({ hasText: "Doomed key" })
+    .filter({ hasText: `Doomed key ${runId}` })
     .getByRole("button", { name: "Revoke" })
     .click();
-  await expect(page.locator(".api-key-list article").filter({ hasText: "Doomed key" })).toHaveClass(/api-key-inactive/);
+  await expect(page.locator(".api-key-list article").filter({ hasText: `Doomed key ${runId}` })).toHaveClass(/api-key-inactive/);
 
   const after = await api.get("http://localhost:5173/api/v1/tickets", {
     headers: { authorization: `Bearer ${key}` },
   });
   expect(after.status()).toBe(401);
+  await api.dispose();
 });
 
 test("the reveal dialog is usable at phone width", async () => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto("/settings");
-  await page.getByLabel("Name").last().fill("Phone key");
-  await page.getByRole("button", { name: "Create key" }).click();
+  const section = apiKeySection(page);
+  await expect(section).toBeVisible();
+  await section.getByLabel("Name").fill(`Phone key ${runId}`);
+  await section.getByRole("button", { name: "Create key" }).click();
   const dialog = page.getByRole("dialog", { name: "Your new API key" });
   await expect(dialog).toBeVisible();
   // The copy button must be reachable without scrolling.

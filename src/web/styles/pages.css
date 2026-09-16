@@ -804,6 +804,9 @@
 .settings-inboxes .page-banner {
   margin: 0;
 }
+.settings-inboxes {
+  min-width: 0;
+}
 .ledger-empty,
 .settings-empty {
   padding: 22px 15px;
@@ -1854,6 +1857,77 @@
     border-radius: 0;
   }
   .api-key-list article {
+    flex-direction: column;
+  }
+}
+
+/* MCP setup — client picker and copy-paste snippet. */
+.mcp-key-field {
+  display: grid;
+  gap: 4px;
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.mcp-key-field input {
+  padding: 8px 10px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.mcp-clients {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mcp-clients button {
+  padding: 6px 12px;
+  color: var(--quiet);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mcp-clients button.active {
+  color: var(--ink);
+  background: var(--surface-sunken);
+  border-color: var(--rule-strong);
+  font-weight: 700;
+}
+.mcp-snippet {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  /* A grid item defaults to min-width:auto, which lets a long snippet widen the page
+     instead of scrolling inside its own box. */
+  min-width: 0;
+  padding: 12px;
+  background: var(--surface-sunken);
+  border-radius: 6px;
+}
+.mcp-snippet pre {
+  /* A zero flex-basis makes the width come from the container rather than from the
+     longest line, so the snippet scrolls inside its own box instead of the page. */
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+  margin: 0;
+  overflow-x: auto;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre;
+}
+@media (max-width: 640px) {
+  .mcp-snippet {
     flex-direction: column;
   }
 }

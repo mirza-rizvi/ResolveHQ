@@ -6,6 +6,7 @@ import { authRoutes } from "./auth/routes";
 import { organizationRoutes } from "./organizations/routes";
 import { HttpError } from "./http/errors";
 import { requireApiKey } from "./auth/api-key";
+import { mcpRoutes } from "./mcp/routes";
 import { customerRoutes } from "./customers/routes";
 import { ticketRoutes } from "./tickets/routes";
 import { tagRoutes } from "./tags/routes";
@@ -117,6 +118,9 @@ v1.route("/automations", automationRoutes);
 v1.route("/privacy", privacyRoutes);
 v1.route("/assistant", assistantRoutes);
 app.route("/api/v1", v1);
+// Mounted outside both /api/* and /api/v1/*: an MCP client speaks JSON-RPC, not REST,
+// and authenticates with a key carrying mcp:read.
+app.route("/api/mcp", mcpRoutes);
 
 app.notFound((context) => {
   if (context.req.path.startsWith("/api/")) {

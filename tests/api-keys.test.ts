@@ -52,6 +52,7 @@ describe("API key scope mapping", () => {
     expect(scopeForRequest("GET", "/api/v1/customers")).toBe("customers:read");
     expect(scopeForRequest("GET", "/api/v1/reports/summary")).toBe("reports:read");
     expect(scopeForRequest("GET", "/api/v1/knowledge-base")).toBe("kb:read");
+    expect(scopeForRequest("POST", "/api/mcp")).toBe("mcp:read");
     // Not in the vocabulary — unreachable with a key at all.
     expect(scopeForRequest("GET", "/api/v1/privacy/customers/x")).toBeNull();
     expect(scopeForRequest("POST", "/api/v1/assistant/draft")).toBeNull();

@@ -54,7 +54,8 @@ function denied(): never {
  */
 export function scopeForRequest(method: string, path: string): ApiScope | null {
   const read = method === "GET" || method === "HEAD";
-  const section = path.replace(/^\/api\/v1/, "").split("/").filter(Boolean)[0] ?? "";
+  // Handles both the versioned REST surface and the MCP endpoint, which sits beside it.
+  const section = path.replace(/^\/api(\/v1)?/, "").split("/").filter(Boolean)[0] ?? "";
   if (section === "tickets" || section === "search") return read ? "tickets:read" : "tickets:write";
   if (section === "customers") return read ? "customers:read" : "customers:write";
   if (section === "knowledge-base" || section === "help-center") return read ? "kb:read" : null;

@@ -10,6 +10,7 @@ import { InboxesSection } from "./sections/inboxes";
 import { MailDeliverySection } from "./sections/mail-delivery";
 import { ReadinessSection } from "./sections/readiness";
 import { ApiKeysSection } from "./sections/api-keys";
+import { McpSection } from "./sections/mcp";
 import { SatisfactionSection } from "./sections/satisfaction";
 import { SlaSection } from "./sections/sla";
 import { WorkspaceSection } from "./sections/workspace";
@@ -58,6 +59,7 @@ export function SettingsPage() {
       <SlaSection canManage={canManage} />
       <SatisfactionSection canManage={canManage} />
       <ApiKeysSection canManage={canManage} />
+      <McpSection canManage={canManage} />
       <AccountSection />
       <MailDeliverySection data={data} />
       <AiSection {...sectionProps} />

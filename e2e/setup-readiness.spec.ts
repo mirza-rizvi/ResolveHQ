@@ -1,18 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// One sign-in per file. The Worker allows ten sign-ins a minute from one address, and
-// a suite that logs in per test exhausts that budget as soon as a few specs exist.
+// One page for the whole file; the session comes from the shared sign-in in auth.setup.ts.
 test.describe.configure({ mode: "serial" });
 
 let page: Page;
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("owner@northstarlabs.test");
-  await page.getByLabel("Password").fill("resolve-demo-2026");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(/\/inbox/);
 });
 
 test.afterAll(async () => {
