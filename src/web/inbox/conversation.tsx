@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Check, MessageSquareText, PanelRightOpen, Trash2, X } from "lucide-react";
+import { AlarmClock, ArrowLeft, Check, MessageSquareText, PanelRightOpen, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/web/auth";
 import { useToast } from "@/web/components/toast";
@@ -9,6 +9,7 @@ import { Button } from "@/web/components/ui";
 import type { DraftStatus } from "@/web/hooks/use-draft";
 import { Composer } from "./composer";
 import { ThreadMessage } from "./thread-message";
+import { SnoozeBanner, SnoozeMenu } from "./snooze-menu";
 import type { Conversation as ConversationModel, Member, MessageKind, SavedReply, Tag, Team } from "./types";
 
 interface ConversationPanelProps {
@@ -76,6 +77,14 @@ export function ConversationPanel({
   const navigate = useNavigate();
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [snoozing, setSnoozing] = useState(false);
+  // `Z` from the inbox shortcut layer, which cannot reach this component's state directly.
+  useEffect(() => {
+    const open = () => setSnoozeOpen(true);
+    window.addEventListener("resolvehq:snooze", open);
+    return () => window.removeEventListener("resolvehq:snooze", open);
+  }, []);
   const canManage = session?.role === "owner" || session?.role === "admin";
   // Shares the composer's cache entry; the thread only needs the opt-in flag.
   const aiQuery = useQuery({
@@ -83,6 +92,38 @@ export function ConversationPanel({
     queryFn: () => api<{ ai: { enabled: boolean; provider: string | null } }>("/organization/settings"),
     staleTime: 5 * 60_000,
   });
+
+  async function snooze(at: Date, reason: string) {
+    if (!conversation) return;
+    setSnoozing(true);
+    try {
+      await api(`/tickets/${conversation.ticket.id}/snooze`, {
+        method: "POST",
+        body: JSON.stringify({ until: at.getTime(), reason: reason.trim() || undefined }),
+      });
+      setSnoozeOpen(false);
+      toast.push(`Snoozed until ${at.toLocaleString()}. It wakes early if the customer replies.`, "success");
+      onRetry();
+    } catch (reason_) {
+      toast.push(errorMessage(reason_, "The ticket could not be snoozed."), "error");
+    } finally {
+      setSnoozing(false);
+    }
+  }
+
+  async function unsnooze() {
+    if (!conversation) return;
+    setSnoozing(true);
+    try {
+      await api(`/tickets/${conversation.ticket.id}/snooze`, { method: "DELETE" });
+      toast.push("Back in the queue.", "success");
+      onRetry();
+    } catch (reason_) {
+      toast.push(errorMessage(reason_, "The ticket could not be unsnoozed."), "error");
+    } finally {
+      setSnoozing(false);
+    }
+  }
 
   async function deleteTicket() {
     if (!conversation || !window.confirm(`Delete ticket #${conversation.ticket.number}? This cannot be undone.`))
@@ -156,6 +197,26 @@ export function ConversationPanel({
                   <Trash2 size={16} />
                 </Button>
               )}
+              <div className="snooze-control">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Snooze ticket"
+                  title="Snooze ticket (Z)"
+                  aria-expanded={snoozeOpen}
+                  onClick={() => setSnoozeOpen((open) => !open)}
+                >
+                  <AlarmClock size={17} />
+                </Button>
+                <SnoozeMenu
+                  open={snoozeOpen}
+                  onOpenChange={setSnoozeOpen}
+                  onSnooze={(at, reason) => void snooze(at, reason)}
+                  openingHour={9}
+                  closingHour={17}
+                  busy={snoozing}
+                />
+              </div>
               <Button
                 variant="ghost"
                 size="icon"
@@ -167,6 +228,14 @@ export function ConversationPanel({
               </Button>
             </div>
           </header>
+          {conversation.ticket.snoozedUntil && (
+            <SnoozeBanner
+              until={conversation.ticket.snoozedUntil}
+              reason={conversation.ticket.snoozeReason ?? null}
+              onUnsnooze={() => void unsnooze()}
+              busy={snoozing}
+            />
+          )}
           <div className="conversation-context">
             <label>
               <span>Status</span>

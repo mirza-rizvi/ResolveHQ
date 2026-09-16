@@ -39,6 +39,11 @@ export async function runScheduled(env: AppBindings) {
     env.DB.prepare(
       "UPDATE tickets SET sla_state = 'due_soon' WHERE id IN (SELECT id FROM tickets WHERE sla_state = 'ok' AND snoozed_until IS NULL AND first_response_at IS NULL AND first_response_due_at IS NOT NULL AND status NOT IN ('resolved','closed') AND ? >= created_at + ((first_response_due_at - created_at) * 3 / 4) ORDER BY first_response_due_at LIMIT 20)",
     ).bind(now),
+    // Wake expired snoozes, shifting the SLA targets by the time actually spent snoozed.
+    // snooze_started_at makes the shift exact even when this run is late.
+    env.DB.prepare(
+      "UPDATE tickets SET snoozed_until = NULL, snooze_started_at = NULL, snooze_reason = NULL, snoozed_total_ms = snoozed_total_ms + (? - COALESCE(snooze_started_at, ?)), first_response_due_at = CASE WHEN first_response_due_at IS NULL THEN NULL ELSE first_response_due_at + (? - COALESCE(snooze_started_at, ?)) END, resolution_due_at = CASE WHEN resolution_due_at IS NULL THEN NULL ELSE resolution_due_at + (? - COALESCE(snooze_started_at, ?)) END WHERE id IN (SELECT id FROM tickets WHERE snoozed_until IS NOT NULL AND snoozed_until <= ? ORDER BY snoozed_until LIMIT 20)",
+    ).bind(now, now, now, now, now, now, now),
     env.DB.prepare(
       "UPDATE tickets SET sla_state = 'breached' WHERE id IN (SELECT id FROM tickets WHERE sla_state IN ('ok','due_soon') AND snoozed_until IS NULL AND first_response_at IS NULL AND first_response_due_at IS NOT NULL AND status NOT IN ('resolved','closed') AND first_response_due_at < ? ORDER BY first_response_due_at LIMIT 20)",
     ).bind(now),

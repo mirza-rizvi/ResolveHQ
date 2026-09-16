@@ -22,6 +22,7 @@ import { selectOutgoingProvider } from "./system";
 import { applyAutomations } from "../automations/service";
 import { buildActivityRow } from "../activity/service";
 import { targetsFor } from "../sla/service";
+import { wakeAssignments } from "../tickets/snooze";
 import type { AppBindings } from "../types";
 
 const maximumRawMailSize = 25 * 1024 * 1024;
@@ -331,6 +332,12 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
       );
 
     const messageId = newMessageId;
+    // Read before the write so the ledger can record that the reply is what woke it.
+    const snoozedBefore = await env.DB.prepare(
+      "SELECT snoozed_until AS snoozedUntil FROM tickets WHERE organization_id = ? AND id = ?",
+    )
+      .bind(organizationId, ticket.id)
+      .first<{ snoozedUntil: number | null }>();
     if (!existing) {
       await db.batch([
         ...ticketWrites,
@@ -361,11 +368,28 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
             lastMessagePreview: preview(mail.text),
             messageCount: sql`${tickets.messageCount} + 1`,
             version: sql`${tickets.version} + 1`,
+            // A customer's reply wakes the ticket in the same write as their message, so
+            // an answer never lands on a still-snoozed ticket. A no-op when not snoozed.
+            ...wakeAssignments(now.getTime()),
           })
           .where(and(eq(tickets.organizationId, organizationId), eq(tickets.id, ticket.id))),
         db.update(inboundMailEvents).set({ messageId }).where(eq(inboundMailEvents.id, eventId)),
       ] as unknown as Parameters<typeof db.batch>[0]);
       await refreshTicketSearch(env.DB, organizationId, ticket.id);
+      if (snoozedBefore?.snoozedUntil)
+        await db.insert(activityLogs).values(
+          buildActivityRow(
+            { organizationId },
+            {
+              ticketId: ticket.id,
+              eventType: "ticket.unsnoozed",
+              entityType: "ticket",
+              entityId: ticket.id,
+              actorType: "customer",
+              metadata: { wokeEarly: true },
+            },
+          ),
+        );
     } else {
       // Reconcile the denormalized ticket state in case a previous delivery
       // stopped after the unique message insert but before the ticket update.

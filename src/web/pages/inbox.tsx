@@ -107,6 +107,9 @@ export function InboxPage() {
     }, [closeCreateDialog, createOpen, customerId, navigate, params, ticketId]),
     onFocusSearch: useCallback(() => searchInput.current?.focus(), []),
     onSelectTicket: useCallback((id: string) => navigate(`/inbox/${id}?${params}`), [navigate, params]),
+    // The menu's open state lives in the conversation panel, so the shortcut asks for it
+    // the same way the API layer signals a lost session: a window event.
+    onSnooze: useCallback(() => window.dispatchEvent(new CustomEvent("resolvehq:snooze")), []),
     onCompose: useCallback((kind: MessageKind) => {
       setDraftKind.current(kind);
       window.requestAnimationFrame(() =>

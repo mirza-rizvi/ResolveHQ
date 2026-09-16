@@ -52,7 +52,12 @@ export interface AttachmentSummary {
 
 export interface Conversation {
   nextMessageCursor?: string | null;
-  ticket: TicketSummary & { customerCompany?: string | null; createdAt: string };
+  ticket: TicketSummary & {
+    customerCompany?: string | null;
+    createdAt: string;
+    snoozeReason?: string | null;
+    resolutionDueAt?: string | null;
+  };
   messages: ThreadMessage[];
   tags: Tag[];
   attachments: AttachmentSummary[];
@@ -105,6 +110,8 @@ export interface SavedViewFilters {
   tagId?: string;
   /** "breached" or "due_soon" — the Overdue and Due-soon queues. */
   sla?: string;
+  /** "only" for the Snoozed queue; "include" keeps snoozed tickets in a working queue. */
+  snoozed?: string;
 }
 
 export interface SavedView {
@@ -125,6 +132,7 @@ export type QueueKey =
   | "unassigned"
   | "mine"
   | "waiting_customer"
+  | "snoozed"
   | "resolved"
   | "closed";
 

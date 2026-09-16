@@ -26,6 +26,7 @@ const viewFilters = z
     assignee: z.enum(["me", "unassigned", "any"]).optional(),
     tagId: z.string().max(80).optional(),
     sla: z.enum(["breached", "due_soon"]).optional(),
+    snoozed: z.enum(["only", "include"]).optional(),
   })
   .strict();
 
@@ -368,6 +369,7 @@ function normalizeFilters(filters: z.infer<typeof viewFilters>): string {
   if (filters.assignee !== undefined) ordered.assignee = filters.assignee;
   if (filters.tagId !== undefined) ordered.tagId = filters.tagId;
   if (filters.sla !== undefined) ordered.sla = filters.sla;
+  if (filters.snoozed !== undefined) ordered.snoozed = filters.snoozed;
   return JSON.stringify(ordered);
 }
 

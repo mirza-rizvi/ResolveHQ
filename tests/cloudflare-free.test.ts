@@ -206,6 +206,40 @@ describe("Free-plan reliability", () => {
     expect(untouched.results.every((row) => row.slaState === "ok")).toBe(true);
   });
 
+  it("bounds the snooze wake sweep to twenty tickets per run", async () => {
+    const { session } = await fixture("free-snooze");
+    const now = Date.now();
+    for (let i = 0; i < 25; i++)
+      await env.DB.prepare(
+        "INSERT INTO tickets (id, organization_id, number, customer_id, subject, status, priority, snoozed_until, snooze_started_at, created_at, updated_at) SELECT ?, ?, ?, customer_id, 'Snoozed', 'open', 'normal', ?, ?, ?, ? FROM tickets WHERE organization_id = ? LIMIT 1",
+      )
+        .bind(
+          `free-snooze-${i}`,
+          session.organizationId,
+          9200 + i,
+          now - 60_000,
+          now - 3_600_000,
+          now - 7_200_000,
+          now,
+          session.organizationId,
+        )
+        .run();
+
+    const stillSnoozed = async () =>
+      (
+        await env.DB.prepare(
+          "SELECT count(*) AS n FROM tickets WHERE organization_id = ? AND snoozed_until IS NOT NULL",
+        )
+          .bind(session.organizationId)
+          .first<{ n: number }>()
+      )?.n ?? 0;
+
+    await runScheduled(env);
+    expect(await stillSnoozed()).toBe(5);
+    await runScheduled(env);
+    expect(await stillSnoozed()).toBe(0);
+  });
+
   it("loads the newest message page and walks older messages without overlap at equal timestamps", async () => {
     const { session, ticket } = await fixture("free-pages");
     for (let i = 0; i < 60; i++)

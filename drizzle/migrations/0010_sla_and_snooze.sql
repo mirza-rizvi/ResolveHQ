@@ -20,5 +20,6 @@ ALTER TABLE `tickets` ADD `sla_state` text NOT NULL DEFAULT 'none';--> statement
 ALTER TABLE `tickets` ADD `snoozed_until` integer;--> statement-breakpoint
 ALTER TABLE `tickets` ADD `snooze_reason` text;--> statement-breakpoint
 ALTER TABLE `tickets` ADD `snoozed_total_ms` integer NOT NULL DEFAULT 0;--> statement-breakpoint
+ALTER TABLE `tickets` ADD `snooze_started_at` integer;--> statement-breakpoint
 CREATE INDEX `tickets_org_sla_due_idx` ON `tickets` (`organization_id`,`sla_state`,`first_response_due_at`);--> statement-breakpoint
 CREATE INDEX `tickets_org_snoozed_idx` ON `tickets` (`organization_id`,`snoozed_until`) WHERE `snoozed_until` IS NOT NULL;

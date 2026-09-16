@@ -231,6 +231,8 @@ export const tickets = sqliteTable(
     slaState: text("sla_state", { enum: slaStates }).notNull().default("none"),
     snoozedUntil: integer("snoozed_until", { mode: "timestamp_ms" }),
     snoozeReason: text("snooze_reason"),
+    /** When the current snooze began, so the pause is exact even when the cron runs late. */
+    snoozeStartedAt: integer("snooze_started_at", { mode: "timestamp_ms" }),
     /** Accumulated snoozed time. On wake the due dates shift by the delta, which is how the SLA clock pauses. */
     snoozedTotalMs: integer("snoozed_total_ms").notNull().default(0),
     ...timestamps,

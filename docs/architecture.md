@@ -28,7 +28,6 @@ Cron ───────────> outbox reconciliation, expired sessions/
 - `src/server/auth`: passwords, sessions, CSRF, and rate limiting.
 - `src/server/organizations`: organizations, memberships, invitations, and roles.
 - `src/server/customers`: customer profiles and history.
-- `src/server/tickets`: tickets, messages, notes, assignment, and tags.
 - `src/server/activity`: the single write path for the activity ledger. Records which kind of actor produced each entry (`user`, `customer`, `automation`, `ai`, `api_key`, `system`) and strips a denylist of sensitive top-level metadata keys before the row is stored.
 - `src/server/attachments`: validated uploads and authorized downloads.
 - `src/server/search`: tenant-scoped ticket and message search.
@@ -36,6 +35,7 @@ Cron ───────────> outbox reconciliation, expired sessions/
 - `src/server/reports`: tenant-scoped window metrics and formula-safe CSV export.
 - `src/server/operations`: the dashboard, saved views, drafts, notifications, bulk updates, and the deployment readiness checks. Readiness resolves DNS over HTTPS rather than through the Cloudflare API, so it needs no API token, and caches its report in a per-organization `settings` row.
 - `src/server/automations`: ordered rule matching with per-event deduplication.
+- `src/server/tickets`: tickets, messages, notes, assignment, tags, and snooze. A snoozed ticket is excluded from the working queues by the server rather than by the UI, so the REST API and MCP cannot disagree with the app about what a queue contains. Waking shifts the SLA targets by the time actually spent snoozed, measured from `snooze_started_at` so a late cron run does not under-count it.
 - `src/server/sla`: response targets and business hours. `policy.ts` is pure and I/O-free and does all of its arithmetic in wall-clock local time in the workspace timezone, converting to UTC only at the boundary, so due dates survive daylight-saving transitions. `sla_state` is denormalized on `tickets` and written only by the scheduled sweep, so the Overdue queue is an index lookup rather than a computation per page load.
 - `src/server/privacy`: customer export, durable erasure, and ticket deletion with mail-cancellation guards.
 - `src/server/assistant`: optional AI summarize, draft, and classification behind the provider seam.

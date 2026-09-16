@@ -1,5 +1,6 @@
 import {
   AlarmClock,
+  AlarmClockOff,
   Archive,
   Check,
   Clock3,
@@ -25,6 +26,7 @@ export const queueNavigation: ReadonlyArray<{ key: QueueKey; label: string; icon
   { key: "unassigned", label: "Unassigned", icon: Users },
   { key: "mine", label: "Mine", icon: UserRound },
   { key: "waiting_customer", label: "Waiting", icon: Clock3 },
+  { key: "snoozed", label: "Snoozed", icon: AlarmClockOff },
   { key: "resolved", label: "Resolved", icon: Check },
   { key: "closed", label: "Closed", icon: Archive },
 ];
@@ -42,6 +44,7 @@ export function queueLabel(queue: string) {
 
 /** The saved-view filter shape a queue stands for; "all" filters on nothing. */
 export function filtersForQueue(queue: string): SavedViewFilters {
+  if (queue === "snoozed") return { snoozed: "only" };
   if (queue === "overdue") return { sla: "breached" };
   if (queue === "due_soon") return { sla: "due_soon" };
   if (queue === "unassigned") return { assignee: "unassigned" };
@@ -52,6 +55,7 @@ export function filtersForQueue(queue: string): SavedViewFilters {
 
 /** The queue a saved view resolves to when it is applied. */
 export function queueForFilters(filters: SavedViewFilters): QueueKey {
+  if (filters.snoozed === "only") return "snoozed";
   if (filters.sla === "breached") return "overdue";
   if (filters.sla === "due_soon") return "due_soon";
   if (filters.status && (queueStatuses as readonly string[]).includes(filters.status))

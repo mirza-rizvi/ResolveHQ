@@ -196,3 +196,13 @@ SET sla_policy_id = 'slp_standard',
     resolution_due_at = (CAST(strftime('%s','now') AS INTEGER) * 1000 + 86400000),
     sla_state = 'due_soon'
 WHERE organization_id = 'org_demo' AND priority = 'high' AND status NOT IN ('resolved','closed');
+
+-- One snoozed ticket, so the Snoozed queue and the conversation banner have something
+-- to show. Pending is the status an agent most often defers from.
+UPDATE tickets
+SET snoozed_until = (CAST(strftime('%s','now') AS INTEGER) * 1000 + 172800000),
+    snooze_started_at = (CAST(strftime('%s','now') AS INTEGER) * 1000 - 3600000),
+    snooze_reason = 'Waiting on the carrier to confirm the replacement shipment'
+WHERE organization_id = 'org_demo'
+  AND status = 'pending'
+  AND id = (SELECT id FROM tickets WHERE organization_id = 'org_demo' AND status = 'pending' ORDER BY created_at LIMIT 1);

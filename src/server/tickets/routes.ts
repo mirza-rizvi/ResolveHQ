@@ -1,7 +1,8 @@
 import { dispatchMail } from "../mail/reliability";
 import { applyAutomations } from "../automations/service";
 import { targetsFor } from "../sla/service";
-import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { MAX_SNOOZE_MS, wakeAssignments } from "./snooze";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { recordActivity } from "resolve-server/activity/service";
@@ -61,6 +62,16 @@ ticketRoutes.get("/", async (context) => {
   const priority = context.req.query("priority");
   const assignee = context.req.query("assignee");
   const sla = context.req.query("sla");
+  const snoozed = context.req.query("snoozed");
+  // Every queue that means "work waiting on us" hides snoozed tickets; "all" does not.
+  const hidesSnoozed =
+    snoozed !== "include" &&
+    (sla === "breached" ||
+      sla === "due_soon" ||
+      assignee === "me" ||
+      assignee === "unassigned" ||
+      status === "open" ||
+      status === "pending");
   const search = context.req.query("q")?.trim().toLowerCase();
   const limit = Math.min(50, Math.max(1, Number(context.req.query("limit") ?? 30) || 30));
   const cursor = decodeCursor(context.req.query("cursor"));
@@ -125,6 +136,14 @@ ticketRoutes.get("/", async (context) => {
         sla === "breached" || sla === "due_soon"
           ? and(eq(tickets.slaState, sla), notInArray(tickets.status, ["resolved", "closed"]))
           : undefined,
+        // Snoozed tickets are hidden from the working queues by the server, not by the UI,
+        // so the REST API and MCP cannot disagree with the app about what is in a queue.
+        // "all" and "snoozed" still show them.
+        snoozed === "only"
+          ? isNotNull(tickets.snoozedUntil)
+          : hidesSnoozed
+            ? or(isNull(tickets.snoozedUntil), lt(tickets.snoozedUntil, new Date()))
+            : undefined,
         ftsQuery
           ? sql`${tickets.id} in (select ticket_id from ticket_search where organization_id = ${tenant.organizationId} and ticket_search match ${ftsQuery})`
           : undefined,
@@ -271,9 +290,9 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
 ticketRoutes.get("/counts", async (context) => {
   const tenant = context.get("tenant");
   const row = await context.env.DB.prepare(
-    "SELECT count(*) AS all_count, sum(status='open') AS open, sum(status='pending') AS pending, sum(status='waiting_customer') AS waiting_customer, sum(status='resolved') AS resolved, sum(status='closed') AS closed, sum(assigned_user_id IS NULL AND status NOT IN ('resolved','closed')) AS unassigned, sum(assigned_user_id = ? AND status NOT IN ('resolved','closed')) AS mine, sum(sla_state = 'breached' AND status NOT IN ('resolved','closed')) AS overdue, sum(sla_state = 'due_soon' AND status NOT IN ('resolved','closed')) AS due_soon FROM tickets WHERE organization_id = ?",
+    "SELECT count(*) AS all_count, sum(status='open') AS open, sum(status='pending') AS pending, sum(status='waiting_customer') AS waiting_customer, sum(status='resolved') AS resolved, sum(status='closed') AS closed, sum(assigned_user_id IS NULL AND status NOT IN ('resolved','closed')) AS unassigned, sum(assigned_user_id = ? AND status NOT IN ('resolved','closed')) AS mine, sum(sla_state = 'breached' AND status NOT IN ('resolved','closed')) AS overdue, sum(sla_state = 'due_soon' AND status NOT IN ('resolved','closed')) AS due_soon, sum(snoozed_until IS NOT NULL AND snoozed_until >= ?) AS snoozed FROM tickets WHERE organization_id = ?",
   )
-    .bind(tenant.userId, tenant.organizationId)
+    .bind(tenant.userId, Date.now(), tenant.organizationId)
     .first<Record<string, number | null>>();
   return context.json({
     counts: {
@@ -287,6 +306,7 @@ ticketRoutes.get("/counts", async (context) => {
       mine: row?.mine ?? 0,
       overdue: row?.overdue ?? 0,
       due_soon: row?.due_soon ?? 0,
+      snoozed: row?.snoozed ?? 0,
     },
   });
 });
@@ -310,6 +330,12 @@ ticketRoutes.get("/:id", async (context) => {
       createdAt: tickets.createdAt,
       updatedAt: tickets.updatedAt,
       version: tickets.version,
+      slaState: tickets.slaState,
+      firstResponseDueAt: tickets.firstResponseDueAt,
+      firstResponseAt: tickets.firstResponseAt,
+      resolutionDueAt: tickets.resolutionDueAt,
+      snoozedUntil: tickets.snoozedUntil,
+      snoozeReason: tickets.snoozeReason,
     })
     .from(tickets)
     .innerJoin(
@@ -437,6 +463,96 @@ ticketRoutes.patch("/:id", validate("json", updateTicketInput), async (context) 
     expectedVersion: version,
   });
   return context.json({ ticket });
+});
+
+const snoozeInput = z.object({
+  until: z.number().int().positive(),
+  reason: z.string().trim().max(240).optional(),
+  version: z.number().int().positive().optional(),
+});
+
+/**
+ * Defers a ticket without lying about it. A snoozed ticket leaves the working queues
+ * server-side, never breaches, and wakes either at its time or the moment the customer
+ * replies — whichever comes first.
+ *
+ * Resolved and closed tickets may be snoozed too: that is a follow-up reminder, and
+ * waking does not reopen them.
+ */
+ticketRoutes.post("/:id/snooze", validate("json", snoozeInput), async (context) => {
+  const tenant = context.get("tenant");
+  const input = context.req.valid("json");
+  const now = Date.now();
+  if (input.until <= now)
+    throw new HttpError(400, "snooze_in_past", "Choose a time in the future to snooze until.");
+  if (input.until > now + MAX_SNOOZE_MS)
+    throw new HttpError(400, "snooze_too_far", "Snooze for at most a year.");
+
+  const db = createDb(context.env.DB);
+  const [current] = await db
+    .select({ id: tickets.id, version: tickets.version, snoozedUntil: tickets.snoozedUntil })
+    .from(tickets)
+    .where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId)))
+    .limit(1);
+  if (!current) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
+  if (input.version !== undefined && input.version !== current.version)
+    throw new HttpError(409, "ticket_version_conflict", "This ticket changed in another session. Refresh and try again.");
+
+  // Re-snoozing an already snoozed ticket banks the first period before starting the
+  // second, so snoozed_total_ms stays correct across both.
+  const banked = current.snoozedUntil ? wakeAssignments(now) : {};
+  const result = await db
+    .update(tickets)
+    .set({
+      ...banked,
+      snoozedUntil: new Date(input.until),
+      snoozeStartedAt: new Date(now),
+      snoozeReason: input.reason ?? null,
+      updatedAt: new Date(now),
+      version: sql`${tickets.version} + 1`,
+    })
+    .where(
+      and(
+        eq(tickets.id, current.id),
+        eq(tickets.organizationId, tenant.organizationId),
+        eq(tickets.version, current.version),
+      ),
+    );
+  if (!result.meta.changes)
+    throw new HttpError(409, "ticket_version_conflict", "This ticket changed in another session. Refresh and try again.");
+
+  await recordActivity(db, tenant, {
+    ticketId: current.id,
+    eventType: "ticket.snoozed",
+    entityType: "ticket",
+    entityId: current.id,
+    metadata: { until: input.until },
+  });
+  return context.json({ snoozedUntil: new Date(input.until).toISOString(), version: current.version + 1 });
+});
+
+ticketRoutes.delete("/:id/snooze", async (context) => {
+  const tenant = context.get("tenant");
+  const db = createDb(context.env.DB);
+  const [current] = await db
+    .select({ id: tickets.id, version: tickets.version, snoozedUntil: tickets.snoozedUntil })
+    .from(tickets)
+    .where(and(eq(tickets.id, context.req.param("id")), eq(tickets.organizationId, tenant.organizationId)))
+    .limit(1);
+  if (!current) throw new HttpError(404, "ticket_not_found", "Ticket not found.");
+  if (!current.snoozedUntil) return context.json({ ok: true, version: current.version });
+
+  await db
+    .update(tickets)
+    .set({ ...wakeAssignments(Date.now()), updatedAt: new Date(), version: sql`${tickets.version} + 1` })
+    .where(and(eq(tickets.id, current.id), eq(tickets.organizationId, tenant.organizationId)));
+  await recordActivity(db, tenant, {
+    ticketId: current.id,
+    eventType: "ticket.unsnoozed",
+    entityType: "ticket",
+    entityId: current.id,
+  });
+  return context.json({ ok: true, version: current.version + 1 });
 });
 
 ticketRoutes.post("/:id/messages", validate("json", messageInput), async (context) => {

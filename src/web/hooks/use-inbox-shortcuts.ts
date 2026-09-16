@@ -10,6 +10,7 @@ interface InboxShortcutOptions {
   onFocusSearch: () => void;
   onSelectTicket: (ticketId: string) => void;
   onCompose: (kind: MessageKind) => void;
+  onSnooze: () => void;
 }
 
 export function useInboxShortcuts({
@@ -20,6 +21,7 @@ export function useInboxShortcuts({
   onFocusSearch,
   onSelectTicket,
   onCompose,
+  onSnooze,
 }: InboxShortcutOptions) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -53,9 +55,14 @@ export function useInboxShortcuts({
       if ((event.key === "r" || event.key === "p") && canCompose) {
         event.preventDefault();
         onCompose(event.key === "p" ? "internal_note" : "message");
+        return;
+      }
+      if (event.key === "z" && ticketId) {
+        event.preventDefault();
+        onSnooze();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canCompose, onCompose, onEscape, onFocusSearch, onSelectTicket, ticketId, tickets]);
+  }, [canCompose, onCompose, onEscape, onFocusSearch, onSelectTicket, onSnooze, ticketId, tickets]);
 }
