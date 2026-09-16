@@ -36,6 +36,7 @@ Cron ───────────> outbox reconciliation, expired sessions/
 - `src/server/reports`: tenant-scoped window metrics and formula-safe CSV export.
 - `src/server/operations`: the dashboard, saved views, drafts, notifications, bulk updates, and the deployment readiness checks. Readiness resolves DNS over HTTPS rather than through the Cloudflare API, so it needs no API token, and caches its report in a per-organization `settings` row.
 - `src/server/automations`: ordered rule matching with per-event deduplication.
+- `src/server/sla`: response targets and business hours. `policy.ts` is pure and I/O-free and does all of its arithmetic in wall-clock local time in the workspace timezone, converting to UTC only at the boundary, so due dates survive daylight-saving transitions. `sla_state` is denormalized on `tickets` and written only by the scheduled sweep, so the Overdue queue is an index lookup rather than a computation per page load.
 - `src/server/privacy`: customer export, durable erasure, and ticket deletion with mail-cancellation guards.
 - `src/server/assistant`: optional AI summarize, draft, and classification behind the provider seam.
 - `src/server/providers`: storage, incoming/outgoing mail, and optional AI contracts.

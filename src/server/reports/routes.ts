@@ -43,7 +43,10 @@ reportRoutes.get("/summary", async (context) => {
       `SELECT count(*) AS created,
               sum(status IN ('resolved','closed')) AS resolvedWithinWindow,
               sum(status NOT IN ('resolved','closed')) AS stillOpen,
-              sum(priority = 'urgent') AS urgent
+              sum(priority = 'urgent') AS urgent,
+              sum(sla_state = 'breached') AS slaBreached,
+              sum(sla_state = 'due_soon') AS slaDueSoon,
+              sum(sla_state != 'none') AS slaTracked
        FROM tickets WHERE organization_id = ? AND created_at >= ? AND created_at < ?`,
     )
     .bind(tenant.organizationId, from, to)
@@ -119,6 +122,11 @@ reportRoutes.get("/summary", async (context) => {
       stillOpen: totals?.stillOpen ?? 0,
       urgent: totals?.urgent ?? 0,
     },
+    sla: {
+      tracked: totals?.slaTracked ?? 0,
+      breached: totals?.slaBreached ?? 0,
+      dueSoon: totals?.slaDueSoon ?? 0,
+    },
     response: { medianMinutes: median(responseSamples), averageMinutes: average(responseSamples) },
     resolution: { medianMinutes: median(resolutionSamples), averageMinutes: average(resolutionSamples) },
     byStatus: Object.fromEntries(byStatus.results.map((row) => [row.status, row.count])),
@@ -132,6 +140,7 @@ reportRoutes.get("/export", requireRole("admin"), async (context) => {
   const { from, to } = parseWindow(context);
   const rows = await context.env.DB.prepare(
     `SELECT t.number, t.subject, t.status, t.priority, t.created_at AS createdAt, t.resolved_at AS resolvedAt,
+              t.sla_state AS slaState, t.first_response_due_at AS firstResponseDueAt,
               c.name AS customerName, c.email AS customerEmail, u.name AS assignee,
               (SELECT count(*) FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id AND m.author_type = 'agent') AS agentReplies,
               (SELECT min(m.created_at) FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id AND m.author_type = 'agent') AS firstAgentReplyAt
@@ -155,6 +164,8 @@ reportRoutes.get("/export", requireRole("admin"), async (context) => {
     "first response minutes",
     "resolution minutes",
     "agent replies",
+    "sla state",
+    "first response due",
   ];
   const cell = (value: string | number | null) => {
     const text = value == null ? "" : String(value);
@@ -179,6 +190,8 @@ reportRoutes.get("/export", requireRole("admin"), async (context) => {
           : "",
         row.resolvedAt != null ? Math.round((Number(row.resolvedAt) - Number(row.createdAt)) / 60_000) : "",
         row.agentReplies,
+        row.slaState,
+        row.firstResponseDueAt != null ? new Date(Number(row.firstResponseDueAt)).toISOString() : "",
       ]
         .map(cell)
         .join(","),

@@ -1,6 +1,7 @@
 import { dispatchMail } from "../mail/reliability";
 import { applyAutomations } from "../automations/service";
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { targetsFor } from "../sla/service";
+import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { recordActivity } from "resolve-server/activity/service";
@@ -59,6 +60,7 @@ ticketRoutes.get("/", async (context) => {
   const status = context.req.query("status");
   const priority = context.req.query("priority");
   const assignee = context.req.query("assignee");
+  const sla = context.req.query("sla");
   const search = context.req.query("q")?.trim().toLowerCase();
   const limit = Math.min(50, Math.max(1, Number(context.req.query("limit") ?? 30) || 30));
   const cursor = decodeCursor(context.req.query("cursor"));
@@ -86,6 +88,10 @@ ticketRoutes.get("/", async (context) => {
       unread: sql<number>`case when ${ticketReadStates.lastReadAt} is null or ${ticketReadStates.lastReadAt} < ${tickets.updatedAt} then 1 else 0 end`,
       lastReplyAt: tickets.lastReplyAt,
       updatedAt: tickets.updatedAt,
+      slaState: tickets.slaState,
+      firstResponseDueAt: tickets.firstResponseDueAt,
+      firstResponseAt: tickets.firstResponseAt,
+      snoozedUntil: tickets.snoozedUntil,
     })
     .from(tickets)
     .innerJoin(
@@ -115,6 +121,10 @@ ticketRoutes.get("/", async (context) => {
           : assignee === "unassigned"
             ? isNull(tickets.assignedUserId)
             : undefined,
+        // The Overdue and Due-soon queues read the denormalized state the cron maintains.
+        sla === "breached" || sla === "due_soon"
+          ? and(eq(tickets.slaState, sla), notInArray(tickets.status, ["resolved", "closed"]))
+          : undefined,
         ftsQuery
           ? sql`${tickets.id} in (select ticket_id from ticket_search where organization_id = ${tenant.organizationId} and ticket_search match ${ftsQuery})`
           : undefined,
@@ -180,6 +190,7 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
   const messageId = newId("msg");
   const outboundJobId = newId("omj");
   const now = new Date();
+  const sla = await targetsFor(context.env, tenant.organizationId, input.priority, now.getTime());
   await db.batch([
     db.insert(tickets).values({
       id: ticketId,
@@ -197,6 +208,17 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
       waitingSince: now,
       lastMessagePreview: preview(input.message),
       messageCount: 1,
+      // Anchored explicitly so created_at and the due dates share one instant; the
+      // column's default would otherwise be stamped a few milliseconds later.
+      createdAt: now,
+      updatedAt: now,
+      slaPolicyId: sla.slaPolicyId,
+      firstResponseDueAt: sla.firstResponseDueAt,
+      resolutionDueAt: sla.resolutionDueAt,
+      slaState: sla.slaState,
+      // An agent-opened ticket ships with the agent's own message, so the first response
+      // has already happened; only the resolution target is still running.
+      firstResponseAt: now,
     }),
     db.insert(messages).values({
       id: messageId,
@@ -249,7 +271,7 @@ ticketRoutes.post("/", validate("json", createTicketInput), async (context) => {
 ticketRoutes.get("/counts", async (context) => {
   const tenant = context.get("tenant");
   const row = await context.env.DB.prepare(
-    "SELECT count(*) AS all_count, sum(status='open') AS open, sum(status='pending') AS pending, sum(status='waiting_customer') AS waiting_customer, sum(status='resolved') AS resolved, sum(status='closed') AS closed, sum(assigned_user_id IS NULL AND status NOT IN ('resolved','closed')) AS unassigned, sum(assigned_user_id = ? AND status NOT IN ('resolved','closed')) AS mine FROM tickets WHERE organization_id = ?",
+    "SELECT count(*) AS all_count, sum(status='open') AS open, sum(status='pending') AS pending, sum(status='waiting_customer') AS waiting_customer, sum(status='resolved') AS resolved, sum(status='closed') AS closed, sum(assigned_user_id IS NULL AND status NOT IN ('resolved','closed')) AS unassigned, sum(assigned_user_id = ? AND status NOT IN ('resolved','closed')) AS mine, sum(sla_state = 'breached' AND status NOT IN ('resolved','closed')) AS overdue, sum(sla_state = 'due_soon' AND status NOT IN ('resolved','closed')) AS due_soon FROM tickets WHERE organization_id = ?",
   )
     .bind(tenant.userId, tenant.organizationId)
     .first<Record<string, number | null>>();
@@ -263,6 +285,8 @@ ticketRoutes.get("/counts", async (context) => {
       closed: row?.closed ?? 0,
       unassigned: row?.unassigned ?? 0,
       mine: row?.mine ?? 0,
+      overdue: row?.overdue ?? 0,
+      due_soon: row?.due_soon ?? 0,
     },
   });
 });
@@ -528,6 +552,10 @@ ticketRoutes.post("/:id/messages", validate("json", messageInput), async (contex
       lastMessagePreview: preview(input.body),
       messageCount: sql`${tickets.messageCount} + 1`,
       version: sql`${tickets.version} + 1`,
+      // Set once, by the first outbound agent message. COALESCE keeps it atomic and
+      // idempotent; an internal note is not a response to the customer.
+      firstResponseAt:
+        input.kind === "message" ? sql`COALESCE(${tickets.firstResponseAt}, ${now.getTime()})` : undefined,
     })
     .where(and(eq(tickets.id, ticket.id), eq(tickets.organizationId, tenant.organizationId)));
   if (input.kind === "message") {

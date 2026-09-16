@@ -32,6 +32,7 @@ More screenshots, including the mobile view and the customer and settings pages,
 - Reply faster with saved replies, internal notes, AI-drafted responses (opt-in), and a responsive three-pane inbox with optimistic-version conflict handling.
 - Reset passwords and accept invitations through system email sent via the same provider seam as ticket mail.
 - Publish a public help center from knowledge-base articles, with drafts kept private to your team.
+- Set response targets that respect your working hours: name a first-reply and resolution target per priority, define a weekly schedule and holidays in your own timezone, and get Overdue and Due-soon queues plus a badge on each ticket. Nothing is tracked until you create a policy, and a ticket arriving on Friday evening is not late on Saturday morning.
 - Track volume and response speed in Reports, export any window to CSV, and automate triage with rule-based Automations.
 - Notify agents of assignments and customer replies in-app, and work comfortably in light or dark mode.
 - Export everything stored about a customer as JSON, or erase it with a durable, resumable workflow that cancels queued mail.

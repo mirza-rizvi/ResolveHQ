@@ -21,6 +21,7 @@ import { refreshTicketSearch } from "../search/index";
 import { selectOutgoingProvider } from "./system";
 import { applyAutomations } from "../automations/service";
 import { buildActivityRow } from "../activity/service";
+import { targetsFor } from "../sla/service";
 import type { AppBindings } from "../types";
 
 const maximumRawMailSize = 25 * 1024 * 1024;
@@ -285,6 +286,9 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
         .first<{ number: number }>();
       if (!numberRow) throw new Error("Inbound workspace no longer exists.");
       ticket = { id: newId("tkt"), number: numberRow.number, subject: mail.subject, customerId: customer.id };
+      // A customer-opened ticket has had no agent response yet, so the first-response
+      // clock starts here. Priority is "normal" until an agent or an automation says otherwise.
+      const sla = await targetsFor(env, organizationId, "normal", now.getTime());
       ticketWrites.push(
         db.insert(tickets).values({
           id: ticket.id,
@@ -299,6 +303,13 @@ export async function processInboundMail(env: AppBindings, payload: InboundPaylo
           lastReplyAt: now,
           lastCustomerReplyAt: now,
           lastMessagePreview: preview(mail.text),
+          // Anchored explicitly so created_at and the due dates share one instant.
+          createdAt: now,
+          updatedAt: now,
+          slaPolicyId: sla.slaPolicyId,
+          firstResponseDueAt: sla.firstResponseDueAt,
+          resolutionDueAt: sla.resolutionDueAt,
+          slaState: sla.slaState,
         }),
       );
     }

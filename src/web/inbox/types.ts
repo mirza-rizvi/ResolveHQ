@@ -22,6 +22,10 @@ export interface TicketSummary {
   preview?: string;
   unread?: boolean;
   tags?: Tag[];
+  slaState?: "none" | "ok" | "due_soon" | "breached";
+  firstResponseDueAt?: string | null;
+  firstResponseAt?: string | null;
+  snoozedUntil?: string | null;
 }
 
 export interface ThreadMessage {
@@ -99,6 +103,8 @@ export interface SavedViewFilters {
   priority?: string;
   assignee?: string;
   tagId?: string;
+  /** "breached" or "due_soon" — the Overdue and Due-soon queues. */
+  sla?: string;
 }
 
 export interface SavedView {
@@ -110,6 +116,16 @@ export interface SavedView {
 
 export type MessageKind = "message" | "internal_note";
 
-export type QueueKey = "all" | "open" | "pending" | "unassigned" | "mine" | "waiting_customer" | "resolved" | "closed";
+export type QueueKey =
+  | "all"
+  | "open"
+  | "overdue"
+  | "due_soon"
+  | "pending"
+  | "unassigned"
+  | "mine"
+  | "waiting_customer"
+  | "resolved"
+  | "closed";
 
 export type QueueCounts = Record<QueueKey, number>;

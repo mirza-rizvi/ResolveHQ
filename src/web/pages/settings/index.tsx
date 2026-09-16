@@ -9,6 +9,7 @@ import { DevMailSection } from "./sections/dev-mail";
 import { InboxesSection } from "./sections/inboxes";
 import { MailDeliverySection } from "./sections/mail-delivery";
 import { ReadinessSection } from "./sections/readiness";
+import { SlaSection } from "./sections/sla";
 import { WorkspaceSection } from "./sections/workspace";
 import type { SettingsData } from "./types";
 
@@ -52,6 +53,7 @@ export function SettingsPage() {
       {canManage && <ReadinessSection />}
       <WorkspaceSection {...sectionProps} />
       <InboxesSection {...sectionProps} />
+      <SlaSection canManage={canManage} />
       <AccountSection />
       <MailDeliverySection data={data} />
       <AiSection {...sectionProps} />

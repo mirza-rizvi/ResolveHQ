@@ -30,6 +30,18 @@ export async function runScheduled(env: AppBindings) {
     env.DB.prepare(
       "UPDATE inbound_mail_events SET terminal_reason = 'retry_exhausted', status = 'failed' WHERE id IN (SELECT id FROM inbound_mail_events WHERE status IN ('staged','failed') AND terminal_reason IS NULL AND attempts >= 6 ORDER BY updated_at LIMIT 20)",
     ),
+    // SLA promotion. The cron is the only writer of due_soon and breached, so the
+    // Overdue queue is an index lookup rather than business-hours arithmetic per row.
+    // Snoozed tickets are excluded from both sweeps: a snoozed ticket must never breach.
+    // The 75% warning threshold is derived in SQL from the stored timestamps; running the
+    // pure business-hours function across the batch would not fit the CPU budget. The
+    // warning is an approximation, the breach itself is exact.
+    env.DB.prepare(
+      "UPDATE tickets SET sla_state = 'due_soon' WHERE id IN (SELECT id FROM tickets WHERE sla_state = 'ok' AND snoozed_until IS NULL AND first_response_at IS NULL AND first_response_due_at IS NOT NULL AND status NOT IN ('resolved','closed') AND ? >= created_at + ((first_response_due_at - created_at) * 3 / 4) ORDER BY first_response_due_at LIMIT 20)",
+    ).bind(now),
+    env.DB.prepare(
+      "UPDATE tickets SET sla_state = 'breached' WHERE id IN (SELECT id FROM tickets WHERE sla_state IN ('ok','due_soon') AND snoozed_until IS NULL AND first_response_at IS NULL AND first_response_due_at IS NOT NULL AND status NOT IN ('resolved','closed') AND first_response_due_at < ? ORDER BY first_response_due_at LIMIT 20)",
+    ).bind(now),
   ]);
   await recoverMissingOutbox(env, now);
   await dispatchMail(env, "inbound-mail");

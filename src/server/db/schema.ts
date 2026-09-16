@@ -188,6 +188,8 @@ export const customerIdentities = sqliteTable(
   ],
 );
 
+export const slaStates = ["none", "ok", "due_soon", "breached"] as const;
+
 export const tickets = sqliteTable(
   "tickets",
   {
@@ -219,6 +221,18 @@ export const tickets = sqliteTable(
     lastReplyAt: integer("last_reply_at", { mode: "timestamp_ms" }),
     resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
     closedAt: integer("closed_at", { mode: "timestamp_ms" }),
+    /** Plain text, deliberately not a foreign key: deleting a policy must not disturb computed dues. */
+    slaPolicyId: text("sla_policy_id"),
+    firstResponseDueAt: integer("first_response_due_at", { mode: "timestamp_ms" }),
+    resolutionDueAt: integer("resolution_due_at", { mode: "timestamp_ms" }),
+    /** Set once, on the first outbound agent message. Freezes first-response evaluation. */
+    firstResponseAt: integer("first_response_at", { mode: "timestamp_ms" }),
+    /** Denormalized so the Overdue queue is an index lookup rather than business-hours arithmetic per row. */
+    slaState: text("sla_state", { enum: slaStates }).notNull().default("none"),
+    snoozedUntil: integer("snoozed_until", { mode: "timestamp_ms" }),
+    snoozeReason: text("snooze_reason"),
+    /** Accumulated snoozed time. On wake the due dates shift by the delta, which is how the SLA clock pauses. */
+    snoozedTotalMs: integer("snoozed_total_ms").notNull().default(0),
     ...timestamps,
   },
   (table) => [
@@ -230,6 +244,8 @@ export const tickets = sqliteTable(
     index("tickets_organization_priority_idx").on(table.organizationId, table.priority),
     index("tickets_organization_updated_id_idx").on(table.organizationId, table.updatedAt, table.id),
     index("tickets_organization_inbox_status_idx").on(table.organizationId, table.inboxId, table.status),
+    index("tickets_org_sla_due_idx").on(table.organizationId, table.slaState, table.firstResponseDueAt),
+    index("tickets_org_snoozed_idx").on(table.organizationId, table.snoozedUntil),
   ],
 );
 
@@ -637,6 +653,30 @@ export const activityLogs = sqliteTable(
     index("activity_logs_organization_created_idx").on(table.organizationId, table.createdAt),
     index("activity_logs_organization_ticket_idx").on(table.organizationId, table.ticketId),
     index("activity_logs_org_actor_type_idx").on(table.organizationId, table.actorType, table.createdAt),
+  ],
+);
+
+export const slaPolicies = sqliteTable(
+  "sla_policies",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** NULL is the workspace default. A non-null value scopes the policy to that priority. */
+    priority: text("priority", { enum: ["low", "normal", "high", "urgent"] }),
+    /** Business minutes, not wall-clock. Nullable: a policy may set only one of the two targets. */
+    firstResponseMinutes: integer("first_response_minutes"),
+    resolutionMinutes: integer("resolution_minutes"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    ...timestamps,
+  },
+  (table) => [
+    index("sla_policies_org_enabled_idx").on(table.organizationId, table.enabled),
+    // One policy per priority, and — via the partial index on NULL — one default per workspace.
+    uniqueIndex("sla_policies_org_priority_uidx").on(table.organizationId, table.priority),
+    uniqueIndex("sla_policies_org_default_uidx").on(table.organizationId),
   ],
 );
 

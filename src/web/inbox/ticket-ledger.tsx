@@ -2,6 +2,7 @@ import { Plus, Search, SlidersHorizontal } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/web/components/ui";
 import { relativeTime } from "./format";
+import { SlaBadge } from "./sla-badge";
 import { queueLabel, queueNavigation } from "./queues";
 import type { TicketSummary } from "./types";
 
@@ -193,7 +194,10 @@ export function TicketLedger({
                     </span>
                   </td>
                   <td>
-                    <time>{relativeTime(ticket.updatedAt)}</time>
+                    <span className="ticket-updated">
+                      <time>{relativeTime(ticket.updatedAt)}</time>
+                      <SlaBadge ticket={ticket} />
+                    </span>
                   </td>
                 </tr>
               ))}

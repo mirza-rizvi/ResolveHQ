@@ -163,6 +163,49 @@ describe("Free-plan reliability", () => {
     }
   });
 
+  it("bounds the SLA promotion sweeps and never promotes a snoozed or answered ticket", async () => {
+    const { session } = await fixture("free-sla");
+    const now = Date.now();
+    const due = now - 60_000;
+    // Twenty-five breach candidates: the sweep must move at most twenty per run.
+    for (let i = 0; i < 25; i++)
+      await env.DB.prepare(
+        "INSERT INTO tickets (id, organization_id, number, customer_id, subject, status, priority, sla_state, first_response_due_at, created_at, updated_at) SELECT ?, ?, ?, customer_id, 'Late', 'open', 'normal', 'ok', ?, ?, ? FROM tickets WHERE organization_id = ? LIMIT 1",
+      )
+        .bind(`free-sla-${i}`, session.organizationId, 9000 + i, due, now - 7_200_000, now, session.organizationId)
+        .run();
+    // One snoozed and one already answered; neither may ever be promoted.
+    await env.DB.prepare(
+      "INSERT INTO tickets (id, organization_id, number, customer_id, subject, status, priority, sla_state, first_response_due_at, snoozed_until, created_at, updated_at) SELECT 'free-sla-snoozed', ?, 9100, customer_id, 'Snoozed', 'open', 'normal', 'ok', ?, ?, ?, ? FROM tickets WHERE organization_id = ? LIMIT 1",
+    )
+      .bind(session.organizationId, due, now + 3_600_000, now - 7_200_000, now, session.organizationId)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO tickets (id, organization_id, number, customer_id, subject, status, priority, sla_state, first_response_due_at, first_response_at, created_at, updated_at) SELECT 'free-sla-answered', ?, 9101, customer_id, 'Answered', 'open', 'normal', 'ok', ?, ?, ?, ? FROM tickets WHERE organization_id = ? LIMIT 1",
+    )
+      .bind(session.organizationId, due, now - 30_000, now - 7_200_000, now, session.organizationId)
+      .run();
+
+    const breachedCount = async () =>
+      (
+        await env.DB.prepare(
+          "SELECT count(*) AS n FROM tickets WHERE organization_id = ? AND sla_state = 'breached'",
+        )
+          .bind(session.organizationId)
+          .first<{ n: number }>()
+      )?.n ?? 0;
+
+    await runScheduled(env);
+    expect(await breachedCount()).toBe(20);
+    await runScheduled(env);
+    expect(await breachedCount()).toBe(25);
+
+    const untouched = await env.DB.prepare(
+      "SELECT id, sla_state AS slaState FROM tickets WHERE id IN ('free-sla-snoozed','free-sla-answered')",
+    ).all<{ id: string; slaState: string }>();
+    expect(untouched.results.every((row) => row.slaState === "ok")).toBe(true);
+  });
+
   it("loads the newest message page and walks older messages without overlap at equal timestamps", async () => {
     const { session, ticket } = await fixture("free-pages");
     for (let i = 0; i < 60; i++)

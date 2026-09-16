@@ -71,6 +71,13 @@
       "when": 1788865200000,
       "tag": "0009_activity_actor_types",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1788867000000,
+      "tag": "0010_sla_and_snooze",
+      "breakpoints": true
     }
   ]
 }

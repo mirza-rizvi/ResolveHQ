@@ -6,6 +6,7 @@ import { Button } from "@/web/components/ui";
 interface Summary {
   window: { from: string; to: string };
   totals: { created: number; resolved: number; stillOpen: number; urgent: number };
+  sla: { tracked: number; breached: number; dueSoon: number };
   response: { medianMinutes: number | null; averageMinutes: number | null };
   resolution: { medianMinutes: number | null; averageMinutes: number | null };
   byStatus: Record<string, number>;
@@ -97,6 +98,10 @@ export function ReportsPage() {
                 ["Resolved", summary.totals.resolved],
                 ["Still open", summary.totals.stillOpen],
                 ["Urgent", summary.totals.urgent],
+                // Only meaningful once a policy exists; zero across the board reads
+                // the same as "not configured", which is honest either way.
+                ["SLA breached", summary.sla.breached],
+                ["SLA due soon", summary.sla.dueSoon],
                 ["First response", minutes(summary.response.medianMinutes)],
                 ["Resolution", minutes(summary.resolution.medianMinutes)],
               ] as Array<[string, number | string]>

@@ -16,6 +16,7 @@ import { webhookRoutes } from "./webhooks/routes";
 import { knowledgeBaseRoutes, helpCenterRoutes } from "./knowledge-base/routes";
 import { reportRoutes } from "./reports/routes";
 import { automationRoutes } from "./automations/routes";
+import { slaRoutes } from "./sla/routes";
 import { privacyRoutes } from "./privacy/routes";
 import { assistantRoutes } from "./assistant/routes";
 
@@ -75,6 +76,7 @@ app.route("/api/knowledge-base", knowledgeBaseRoutes);
 app.route("/api/help-center", helpCenterRoutes);
 app.route("/api/reports", reportRoutes);
 app.route("/api/automations", automationRoutes);
+app.route("/api/sla", slaRoutes);
 app.route("/api/privacy", privacyRoutes);
 app.route("/api/assistant", assistantRoutes);
 

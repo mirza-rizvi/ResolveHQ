@@ -119,7 +119,7 @@ If a message does not arrive, check Email Routing settings in your Cloudflare da
 
 Urgent is meant for outages or anything blocking a customer''s core workflow right now. High is for issues affecting one customer significantly but without a full outage. Normal covers most day-to-day requests, and Low is for questions or minor requests that can wait.
 
-ResolveHQ does not run SLA timers today, so priority is a signal for your team''s own triage rather than an automated countdown.', 'published', 1, (CAST(strftime('%s','now') AS INTEGER) * 1000 - 2160000000), 'usr_owner', (CAST(strftime('%s','now') AS INTEGER) * 1000 - 2160000000), (CAST(strftime('%s','now') AS INTEGER) * 1000 - 2160000000)),
+Priority also selects which response target applies. If your workspace has SLA policies configured under Settings, a ticket''s priority decides how long the team has to send a first reply and to resolve it, counted in working hours rather than wall-clock time.', 'published', 1, (CAST(strftime('%s','now') AS INTEGER) * 1000 - 2160000000), 'usr_owner', (CAST(strftime('%s','now') AS INTEGER) * 1000 - 2160000000), (CAST(strftime('%s','now') AS INTEGER) * 1000 - 2160000000)),
   ('kb_automations', 'org_demo', 'How automations trigger on new tickets', 'how-automations-trigger', 'Automations', 'Automations run whenever a ticket is created or updated. Each rule checks its conditions — matching on subject, priority, status, customer email, or inbox — and if every condition matches, the rule''s actions run in order.
 
 Actions can change priority or status, assign the ticket to a teammate, or add a tag. A ticket can match more than one rule, and rules run in the order shown on the Automations page.
@@ -163,3 +163,36 @@ FROM tickets t LEFT JOIN messages m ON m.ticket_id = t.id AND m.organization_id 
 LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id AND tt.organization_id = t.organization_id
 LEFT JOIN tags g ON g.id = tt.tag_id AND g.organization_id = t.organization_id
 WHERE t.organization_id = 'org_demo' GROUP BY t.id;
+
+-- Response targets, so the Overdue and Due-soon queues, the ticket badges, and the
+-- SLA figures in Reports have something to show. Business hours are UTC weekdays, which
+-- keeps the demo's due dates predictable wherever the seed runs.
+INSERT OR IGNORE INTO settings (organization_id, key, value, updated_by_user_id, updated_at)
+VALUES (
+  'org_demo',
+  'business_hours',
+  '{"timezone":"UTC","days":[{"day":1,"start":"09:00","end":"17:30"},{"day":2,"start":"09:00","end":"17:30"},{"day":3,"start":"09:00","end":"17:30"},{"day":4,"start":"09:00","end":"17:30"},{"day":5,"start":"09:00","end":"17:30"}],"holidays":[]}',
+  'usr_owner',
+  1788192000000
+);
+
+INSERT OR IGNORE INTO sla_policies (id, organization_id, name, priority, first_response_minutes, resolution_minutes, enabled, created_at, updated_at)
+VALUES
+  ('slp_standard', 'org_demo', 'Standard', NULL, 240, 2880, 1, 1788192000000, 1788192000000),
+  ('slp_urgent', 'org_demo', 'Urgent', 'urgent', 30, 480, 1, 1788192000000, 1788192000000);
+
+-- One breached and one due-soon ticket among the open ones, chosen by priority so the
+-- demo reads sensibly: the urgent ticket is the one that is late.
+UPDATE tickets
+SET sla_policy_id = 'slp_urgent',
+    first_response_due_at = (CAST(strftime('%s','now') AS INTEGER) * 1000 - 5400000),
+    resolution_due_at = (CAST(strftime('%s','now') AS INTEGER) * 1000 + 14400000),
+    sla_state = 'breached'
+WHERE organization_id = 'org_demo' AND priority = 'urgent' AND status NOT IN ('resolved','closed');
+
+UPDATE tickets
+SET sla_policy_id = 'slp_standard',
+    first_response_due_at = (CAST(strftime('%s','now') AS INTEGER) * 1000 + 2700000),
+    resolution_due_at = (CAST(strftime('%s','now') AS INTEGER) * 1000 + 86400000),
+    sla_state = 'due_soon'
+WHERE organization_id = 'org_demo' AND priority = 'high' AND status NOT IN ('resolved','closed');

@@ -6,6 +6,7 @@ import { HttpError } from "resolve-server/http/errors";
 import { newId } from "resolve-server/lib/id";
 import type { AppBindings, TenantContext } from "resolve-server/types";
 import type { TicketPriority, TicketStatus } from "resolve-shared/domain";
+import { refreshTicketTargets } from "resolve-server/sla/service";
 
 export type Ticket = typeof tickets.$inferSelect;
 
@@ -140,6 +141,15 @@ export async function applyTicketUpdate(
       entityType: "ticket",
       entityId: current.id,
       metadata: { from: current.priority, to: changes.priority },
+    });
+    // Recomputed from created_at, never from now: otherwise toggling priority back and
+    // forth would clear a breach. A policy change legitimately can clear one; a toggle cannot.
+    await refreshTicketTargets(env, tenant.organizationId, {
+      id: current.id,
+      priority: changes.priority,
+      createdAt: current.createdAt,
+      snoozedTotalMs: current.snoozedTotalMs,
+      firstResponseAt: current.firstResponseAt,
     });
   }
   return { ...current, ...changes, ...stamps, updatedAt: now, version: current.version + 1 };

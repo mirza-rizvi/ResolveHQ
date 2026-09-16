@@ -14,6 +14,8 @@ export interface TicketFilters {
 export function ticketSearchParams({ queue, priority, q }: TicketFilters) {
   const search = new URLSearchParams();
   if ((queueStatuses as readonly string[]).includes(queue)) search.set("status", queue);
+  if (queue === "overdue") search.set("sla", "breached");
+  if (queue === "due_soon") search.set("sla", "due_soon");
   if (queue === "unassigned") search.set("assignee", "unassigned");
   if (queue === "mine") search.set("assignee", "me");
   if (priority) search.set("priority", priority);
