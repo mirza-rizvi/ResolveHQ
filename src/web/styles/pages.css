@@ -1625,3 +1625,111 @@
     flex-wrap: wrap;
   }
 }
+
+/* Public rating page — no rail, no navigation, mobile-first. */
+.rate-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 24px 16px;
+  background: var(--surface-sunken);
+}
+.rate-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 28px 24px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  text-align: center;
+}
+.rate-face {
+  font-size: 44px;
+  line-height: 1;
+}
+.rate-card h1 {
+  margin: 14px 0 8px;
+  color: var(--ink);
+  font-size: 19px;
+}
+.rate-quiet {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.rate-comment {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+  text-align: left;
+}
+.rate-comment label {
+  color: var(--quiet);
+  font-size: 12px;
+  font-weight: 700;
+}
+.rate-comment textarea {
+  padding: 10px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+.rate-comment button {
+  /* Most customers open this from a phone mail client. */
+  min-height: 44px;
+  padding: 0 18px;
+  color: #ffffff;
+  background: var(--action);
+  border: 0;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.rate-comment button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Recent satisfaction answers in settings. */
+.csat-recent {
+  display: grid;
+  gap: 6px;
+}
+.csat-recent article {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.csat-recent strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+}
+.csat-recent small {
+  display: block;
+  margin-top: 3px;
+  color: var(--quiet);
+  font-size: 11px;
+}
+.csat-recent time {
+  color: var(--quiet);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

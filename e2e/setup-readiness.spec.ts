@@ -1,15 +1,26 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-async function signIn(page: import("@playwright/test").Page) {
+// One sign-in per file. The Worker allows ten sign-ins a minute from one address, and
+// a suite that logs in per test exhausts that budget as soon as a few specs exist.
+test.describe.configure({ mode: "serial" });
+
+let page: Page;
+
+test.beforeAll(async ({ browser }) => {
+  page = await browser.newPage();
   await page.goto("/login");
   await page.getByLabel("Email").fill("owner@northstarlabs.test");
   await page.getByLabel("Password").fill("resolve-demo-2026");
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/inbox/);
-}
+});
 
-test("the setup page reports live readiness and never blocks the app", async ({ page }) => {
-  await signIn(page);
+test.afterAll(async () => {
+  await page.close();
+});
+
+test("the setup page reports live readiness and never blocks the app", async () => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/setup");
   await expect(page.getByRole("heading", { name: "Set up ResolveHQ" })).toBeVisible();
 
@@ -32,8 +43,7 @@ test("the setup page reports live readiness and never blocks the app", async ({ 
   await page.waitForURL(/\/inbox/);
 });
 
-test("the settings health card shares the setup checklist and re-checks on demand", async ({ page }) => {
-  await signIn(page);
+test("the settings health card shares the setup checklist and re-checks on demand", async () => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "Workspace settings", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Setup & health" })).toBeVisible();
@@ -45,8 +55,8 @@ test("the settings health card shares the setup checklist and re-checks on deman
   await expect(status).toContainText(/Checked/);
 });
 
-test("the setup banner can be dismissed and stays dismissed across reloads", async ({ page }) => {
-  await signIn(page);
+test("the setup banner can be dismissed and stays dismissed across reloads", async () => {
+  await page.goto("/inbox");
   // The demo workspace's domain resolves to nothing, so a required check fails and raises the banner.
   const banner = page.locator(".setup-banner");
   await expect(banner).toBeVisible();
@@ -61,8 +71,7 @@ test("the setup banner can be dismissed and stays dismissed across reloads", asy
   await expect(banner).toBeHidden();
 });
 
-test("the setup checklist stays readable at phone width and in dark mode", async ({ page }) => {
-  await signIn(page);
+test("the setup checklist stays readable at phone width and in dark mode", async () => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto("/setup");
   await expect(page.locator(".readiness-row").first()).toBeVisible();

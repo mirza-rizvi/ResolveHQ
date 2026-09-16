@@ -21,6 +21,7 @@ const CustomersPage = lazy(() => import("./pages/customers").then((module) => ({
 const TeamPage = lazy(() => import("./pages/team").then((module) => ({ default: module.TeamPage })));
 const SettingsPage = lazy(() => import("./pages/settings").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(() => import("./pages/setup").then((module) => ({ default: module.SetupPage })));
+const RatePage = lazy(() => import("./pages/rate").then((module) => ({ default: module.RatePage })));
 const KnowledgeBasePage = lazy(() =>
   import("./pages/knowledge-base").then((module) => ({ default: module.KnowledgeBasePage })),
 );
@@ -52,6 +53,8 @@ const router = createBrowserRouter([
   { path: "/reset-password", element: deferred(<ResetPasswordPage />), errorElement: <RouteError /> },
   { path: "/accept-invite", element: deferred(<AcceptInvitePage />), errorElement: <RouteError /> },
   { path: "/help/:workspace/:articleSlug?", element: deferred(<HelpCenterPage />), errorElement: <RouteError /> },
+  // Public: customers reach this from a link in their mail client, with no session.
+  { path: "/rate/:token", element: deferred(<RatePage />), errorElement: <RouteError /> },
   {
     element: <RequireAuth />,
     errorElement: <RouteError />,

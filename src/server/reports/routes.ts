@@ -51,6 +51,17 @@ reportRoutes.get("/summary", async (context) => {
     )
     .bind(tenant.organizationId, from, to)
     .first<Record<string, number>>();
+  // Never a score without its sample size: at small scale a handful of responses swings
+  // an average wildly, and a lone "2.0" with no denominator actively misleads.
+  const satisfaction = await db
+    .prepare(
+      `SELECT count(*) AS surveysSent,
+              count(responded_at) AS responses,
+              avg(rating) AS averageRating
+       FROM csat_responses WHERE organization_id = ? AND sent_at >= ? AND sent_at < ?`,
+    )
+    .bind(tenant.organizationId, from, to)
+    .first<{ surveysSent: number; responses: number; averageRating: number | null }>();
   const responseTimes = await db
     .prepare(
       `SELECT (SELECT min(m.created_at) FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id AND m.author_type = 'agent') - t.created_at AS firstResponseMinutes
@@ -122,6 +133,12 @@ reportRoutes.get("/summary", async (context) => {
       stillOpen: totals?.stillOpen ?? 0,
       urgent: totals?.urgent ?? 0,
     },
+    satisfaction: {
+      surveysSent: satisfaction?.surveysSent ?? 0,
+      responses: satisfaction?.responses ?? 0,
+      averageRating:
+        satisfaction?.averageRating == null ? null : Math.round(satisfaction.averageRating * 10) / 10,
+    },
     sla: {
       tracked: totals?.slaTracked ?? 0,
       breached: totals?.slaBreached ?? 0,
@@ -141,6 +158,8 @@ reportRoutes.get("/export", requireRole("admin"), async (context) => {
   const rows = await context.env.DB.prepare(
     `SELECT t.number, t.subject, t.status, t.priority, t.created_at AS createdAt, t.resolved_at AS resolvedAt,
               t.sla_state AS slaState, t.first_response_due_at AS firstResponseDueAt,
+              (SELECT rating FROM csat_responses r WHERE r.organization_id = t.organization_id AND r.ticket_id = t.id) AS satisfactionRating,
+              (SELECT comment FROM csat_responses r WHERE r.organization_id = t.organization_id AND r.ticket_id = t.id) AS satisfactionComment,
               c.name AS customerName, c.email AS customerEmail, u.name AS assignee,
               (SELECT count(*) FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id AND m.author_type = 'agent') AS agentReplies,
               (SELECT min(m.created_at) FROM messages m WHERE m.organization_id = t.organization_id AND m.ticket_id = t.id AND m.author_type = 'agent') AS firstAgentReplyAt
@@ -166,6 +185,8 @@ reportRoutes.get("/export", requireRole("admin"), async (context) => {
     "agent replies",
     "sla state",
     "first response due",
+    "satisfaction rating",
+    "satisfaction comment",
   ];
   const cell = (value: string | number | null) => {
     const text = value == null ? "" : String(value);
@@ -192,6 +213,8 @@ reportRoutes.get("/export", requireRole("admin"), async (context) => {
         row.agentReplies,
         row.slaState,
         row.firstResponseDueAt != null ? new Date(Number(row.firstResponseDueAt)).toISOString() : "",
+        row.satisfactionRating,
+        row.satisfactionComment,
       ]
         .map(cell)
         .join(","),

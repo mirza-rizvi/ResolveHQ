@@ -682,6 +682,37 @@ export const slaPolicies = sqliteTable(
   ],
 );
 
+export const csatResponses = sqliteTable(
+  "csat_responses",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    ticketId: text("ticket_id")
+      .notNull()
+      .references(() => tickets.id, { onDelete: "cascade" }),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    messageId: text("message_id").references(() => messages.id, { onDelete: "set null" }),
+    /** Null until the customer answers; the row exists from sent_at so response rate is derivable. */
+    rating: integer("rating"),
+    comment: text("comment"),
+    sentAt: integer("sent_at", { mode: "timestamp_ms" }).notNull(),
+    respondedAt: integer("responded_at", { mode: "timestamp_ms" }),
+    /** Set on the first accepted rating; enforces single use. */
+    consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (table) => [
+    // One survey per ticket: this is what stops a second resolution sending another.
+    uniqueIndex("csat_responses_ticket_uidx").on(table.ticketId),
+    index("csat_responses_org_responded_idx").on(table.organizationId, table.respondedAt),
+    index("csat_responses_org_customer_idx").on(table.organizationId, table.customerId),
+  ],
+);
+
 export const settings = sqliteTable(
   "settings",
   {

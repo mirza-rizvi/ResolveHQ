@@ -7,6 +7,7 @@ interface Summary {
   window: { from: string; to: string };
   totals: { created: number; resolved: number; stillOpen: number; urgent: number };
   sla: { tracked: number; breached: number; dueSoon: number };
+  satisfaction: { surveysSent: number; responses: number; averageRating: number | null };
   response: { medianMinutes: number | null; averageMinutes: number | null };
   resolution: { medianMinutes: number | null; averageMinutes: number | null };
   byStatus: Record<string, number>;
@@ -19,6 +20,12 @@ const windows = [
   { label: "Last 30 days", days: 30 },
   { label: "Last 90 days", days: 90 },
 ];
+
+/** Always renders the denominator: "4.3 (7)" or "No answers yet". */
+const satisfaction = (value: { responses: number; averageRating: number | null }) =>
+  !value.responses || value.averageRating == null
+    ? "No answers yet"
+    : `${value.averageRating.toFixed(1)} (${value.responses})`;
 
 const minutes = (value: number | null) => {
   if (value == null) return "—";
@@ -104,6 +111,9 @@ export function ReportsPage() {
                 ["SLA due soon", summary.sla.dueSoon],
                 ["First response", minutes(summary.response.medianMinutes)],
                 ["Resolution", minutes(summary.resolution.medianMinutes)],
+                // Never a score without its sample size: at this scale a handful of
+                // answers swings the average, and a lone "2.0" with no denominator lies.
+                ["Satisfaction", satisfaction(summary.satisfaction)],
               ] as Array<[string, number | string]>
             ).map(([label, value]) => (
               <span key={label}>

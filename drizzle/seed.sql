@@ -206,3 +206,27 @@ SET snoozed_until = (CAST(strftime('%s','now') AS INTEGER) * 1000 + 172800000),
 WHERE organization_id = 'org_demo'
   AND status = 'pending'
   AND id = (SELECT id FROM tickets WHERE organization_id = 'org_demo' AND status = 'pending' ORDER BY created_at LIMIT 1);
+
+-- Satisfaction ratings on, with two answered surveys, so Reports shows a real average
+-- with its sample size rather than an empty state.
+INSERT OR IGNORE INTO settings (organization_id, key, value, updated_by_user_id, updated_at)
+VALUES
+  ('org_demo', 'csat.enabled', 'true', 'usr_owner', 1788192000000),
+  ('org_demo', 'csat.prompt', '"How did we do?"', 'usr_owner', 1788192000000);
+
+INSERT OR IGNORE INTO csat_responses (id, organization_id, ticket_id, customer_id, rating, comment, sent_at, responded_at, consumed_at, created_at, updated_at)
+SELECT
+  'csat_' || t.id,
+  'org_demo',
+  t.id,
+  t.customer_id,
+  CASE WHEN t.priority = 'low' THEN 3 ELSE 5 END,
+  CASE WHEN t.priority = 'low' THEN 'Took a little while, but it got sorted.' ELSE 'Fast and clear, thank you.' END,
+  (CAST(strftime('%s','now') AS INTEGER) * 1000 - 172800000),
+  (CAST(strftime('%s','now') AS INTEGER) * 1000 - 169200000),
+  (CAST(strftime('%s','now') AS INTEGER) * 1000 - 169200000),
+  (CAST(strftime('%s','now') AS INTEGER) * 1000 - 172800000),
+  (CAST(strftime('%s','now') AS INTEGER) * 1000 - 169200000)
+FROM tickets t
+WHERE t.organization_id = 'org_demo' AND t.status IN ('resolved','closed')
+LIMIT 2;

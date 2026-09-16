@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { createDb } from "../db";
-import { attachments, customers, messages, tickets } from "../db/schema";
+import { attachments, csatResponses, customers, messages, tickets } from "../db/schema";
 import { listIdentities } from "../customers/identities";
 
 const terminalEraseUpdate = (table: "inbound_mail_events" | "outbound_mail_jobs", where: string) =>
@@ -170,6 +170,20 @@ export async function collectCustomerExport(database: D1Database, organizationId
         .where(and(eq(messages.organizationId, organizationId), inArray(messages.ticketId, ticketIds)))
         .orderBy(messages.createdAt)
     : [];
+  // Deletion is handled by ON DELETE CASCADE from both tickets and customers, but a
+  // cascade does not export. A new table the export misses is a privacy regression.
+  const csatRows = ticketIds.length
+    ? await db
+        .select({
+          ticketId: csatResponses.ticketId,
+          rating: csatResponses.rating,
+          comment: csatResponses.comment,
+          sentAt: csatResponses.sentAt,
+          respondedAt: csatResponses.respondedAt,
+        })
+        .from(csatResponses)
+        .where(and(eq(csatResponses.organizationId, organizationId), inArray(csatResponses.ticketId, ticketIds)))
+    : [];
   const attachmentRows = ticketIds.length
     ? await db
         .select({
@@ -221,6 +235,14 @@ export async function collectCustomerExport(database: D1Database, organizationId
           objectKey: attachment.objectKey,
           createdAt: attachment.createdAt,
         })),
+      satisfactionRating: csatRows
+        .filter((response) => response.ticketId === ticket.id)
+        .map((response) => ({
+          rating: response.rating,
+          comment: response.comment,
+          sentAt: response.sentAt,
+          respondedAt: response.respondedAt,
+        }))[0] ?? null,
     })),
   };
 }

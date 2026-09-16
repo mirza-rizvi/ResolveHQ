@@ -23,6 +23,7 @@ import { applyAutomations } from "../automations/service";
 import { buildActivityRow } from "../activity/service";
 import { targetsFor } from "../sla/service";
 import { wakeAssignments } from "../tickets/snooze";
+import { claimSurvey, readCsatSettings, renderSurvey } from "../csat/service";
 import type { AppBindings } from "../types";
 
 const maximumRawMailSize = 25 * 1024 * 1024;
@@ -560,7 +561,7 @@ export async function processOutboundMail(
   job.attempts = claimed.attempts;
   const db = createDb(env.DB);
   const row = await env.DB.prepare(
-    "SELECT m.body_text AS body, m.body_html AS html, m.delivery_status AS status, m.rfc_message_id AS rfcMessageId, c.email AS customerEmail, t.id AS ticketId, t.subject, t.number, o.slug AS organizationSlug, i.email_address AS inboxAddress, coalesce(i.email_address, o.support_email) AS supportEmail FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = m.organization_id JOIN organizations o ON o.id = m.organization_id LEFT JOIN inboxes i ON i.id = t.inbox_id AND i.organization_id = t.organization_id AND i.disabled_at IS NULL WHERE m.organization_id = ? AND m.id = ? LIMIT 1",
+    "SELECT m.body_text AS body, m.body_html AS html, m.delivery_status AS status, m.rfc_message_id AS rfcMessageId, c.email AS customerEmail, c.id AS customerId, t.id AS ticketId, t.status AS ticketStatus, t.subject, t.number, o.slug AS organizationSlug, i.email_address AS inboxAddress, coalesce(i.email_address, o.support_email) AS supportEmail FROM messages m JOIN tickets t ON t.id = m.ticket_id AND t.organization_id = m.organization_id JOIN customers c ON c.id = t.customer_id AND c.organization_id = m.organization_id JOIN organizations o ON o.id = m.organization_id LEFT JOIN inboxes i ON i.id = t.inbox_id AND i.organization_id = t.organization_id AND i.disabled_at IS NULL WHERE m.organization_id = ? AND m.id = ? LIMIT 1",
   )
     .bind(job.organizationId, job.messageId)
     .first<OutboundRow>();
@@ -591,14 +592,17 @@ export async function processOutboundMail(
     )
       .bind(job.organizationId, row.ticketId)
       .first<{ ref: string }>();
+    // Appended only when the envelope is first built, so a retry reuses the frozen
+    // envelope and can never send a second survey.
+    const survey = job.envelope ? null : await buildSurvey(env, job.organizationId, job.messageId, row);
     const envelope: OutgoingMail = job.envelope
       ? JSON.parse(job.envelope)
       : {
           from: row.supportEmail,
           to: row.customerEmail,
           subject: `[#${row.number}] ${row.subject}`,
-          text: row.body,
-          html: row.html,
+          text: survey ? `${row.body}\n${survey.text}` : row.body,
+          html: survey && row.html ? `${row.html}${survey.html}` : row.html,
           messageId: rfcMessageId,
           references: lastCustomer?.ref ? [lastCustomer.ref] : undefined,
           // Opt-in: the tagged address only reaches the Worker when the domain
@@ -739,6 +743,31 @@ interface JobRow {
   status: string;
   attempts: number;
 }
+/**
+ * Builds the satisfaction survey for a resolving reply, or returns null.
+ *
+ * Requires all of: the workspace has CSAT switched on, the ticket is now resolved or
+ * closed, APP_URL is set and parseable, and no survey has been claimed for this ticket.
+ *
+ * With APP_URL unset it appends nothing: a broken link in a real customer's inbox is
+ * worse than no survey, and the readiness page already reports the missing value.
+ */
+async function buildSurvey(env: AppBindings, organizationId: string, messageId: string, row: OutboundRow) {
+  if (row.ticketStatus !== "resolved" && row.ticketStatus !== "closed") return null;
+  const { enabled, prompt } = await readCsatSettings(env, organizationId);
+  if (!enabled) return null;
+  const appUrl = env.APP_URL?.trim();
+  if (!appUrl) return null;
+  try {
+    const parsed = new URL(appUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+  if (!(await claimSurvey(env, organizationId, row.ticketId, row.customerId, messageId))) return null;
+  return renderSurvey(env, appUrl, row.ticketId, prompt);
+}
+
 interface OutboundRow {
   body: string;
   html?: string;
@@ -746,6 +775,8 @@ interface OutboundRow {
   rfcMessageId?: string;
   customerEmail: string;
   ticketId: string;
+  ticketStatus: string;
+  customerId: string;
   subject: string;
   number: number;
   organizationSlug: string;

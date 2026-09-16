@@ -51,6 +51,10 @@ Both must be set together: the server only exposes the site key from `GET /api/a
 4. Send a test email to that address. It should appear in the inbox shortly after.
 5. Replies go out through Resend once `RESEND_API_KEY` is set. Without it, outgoing messages show a Failed delivery badge with the reason on hover.
 
+### Rotating `SESSION_PEPPER`
+
+`SESSION_PEPPER` signs sessions, the optional signed reply address, and satisfaction rating links. Changing it signs everyone out **and** invalidates any rating link already sitting in a customer's inbox — those customers see "this rating link is no longer available" rather than an error. This is deliberate: a second secret would be one more thing to get wrong, and the consequence of a rotation is limited to unanswered surveys.
+
 The readiness checks need no API token: they use the public `cloudflare-dns.com` resolver, so they work on a fresh deployment with nothing else configured. Results are cached per workspace for ten minutes; **Re-check** bypasses the cache. A DMARC record is reported as optional, and a resolver that cannot be reached is reported as unknown rather than as a missing record.
 
 ## Resend webhooks

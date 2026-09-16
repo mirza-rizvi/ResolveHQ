@@ -17,6 +17,8 @@ import { knowledgeBaseRoutes, helpCenterRoutes } from "./knowledge-base/routes";
 import { reportRoutes } from "./reports/routes";
 import { automationRoutes } from "./automations/routes";
 import { slaRoutes } from "./sla/routes";
+import { csatRoutes } from "./csat/routes";
+import { csatAdminRoutes } from "./csat/admin-routes";
 import { privacyRoutes } from "./privacy/routes";
 import { assistantRoutes } from "./assistant/routes";
 
@@ -77,6 +79,9 @@ app.route("/api/help-center", helpCenterRoutes);
 app.route("/api/reports", reportRoutes);
 app.route("/api/automations", automationRoutes);
 app.route("/api/sla", slaRoutes);
+// Public and unauthenticated: rating links are clicked from a customer's mail client.
+app.route("/api/csat", csatRoutes);
+app.route("/api/satisfaction", csatAdminRoutes);
 app.route("/api/privacy", privacyRoutes);
 app.route("/api/assistant", assistantRoutes);
 
