@@ -159,6 +159,36 @@ and the response says when that happened.
 
 The readiness checks need no API token: they use the public `cloudflare-dns.com` resolver, so they work on a fresh deployment with nothing else configured. Results are cached per workspace for ten minutes; **Re-check** bypasses the cache. A DMARC record is reported as optional, and a resolver that cannot be reached is reported as unknown rather than as a missing record.
 
+## Workspace backups
+
+**Settings → Workspace export** writes every table in your workspace to newline-delimited JSON in
+the R2 bucket you already use for attachments, under `_backups/<organization-id>/<backup-id>/`. One
+file per table, downloadable from the same page. No new binding and no extra setup.
+
+An export runs in the background: each cron tick writes another bounded slice and remembers where it
+got to, so a large workspace finishes across several ticks rather than timing out. One export at a
+time per workspace, one per day. Turn on the weekly schedule and set how long exports are kept
+(30 days by default) on the same page.
+
+What is **not** in an export: attachment files (their database records are included), session and
+password-reset rows, API key hashes, webhook signing secrets and bot tokens, and passwords. It is a
+point-in-time-ish copy — rows written after the export starts may not be included.
+
+### Restoring
+
+There is deliberately no restore button. A restore that half-applies, leaving foreign keys pointing
+at rows that no longer exist, is worse than no button at all. Restore is a deliberate operation:
+
+```bash
+# 1. Download the tables you need from Settings → Workspace export.
+# 2. Turn each NDJSON line into an INSERT against a scratch database first, and check it.
+npx wrangler d1 execute DB --remote --file=./restore.sql
+```
+
+Load tables in the order the export lists them — `organizations`, `users`, memberships, inboxes,
+customers, tickets, then messages and everything that references them — so foreign keys resolve.
+Test the whole thing against a local database (`--local`) before you point it at production.
+
 ## Resend webhooks
 
 Point Resend's webhooks at `https://<your-worker>/api/webhooks/resend` and set `RESEND_WEBHOOK_SECRET` so signatures can be verified.

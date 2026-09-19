@@ -6,6 +6,7 @@ import { dispatchMail, leaseMs, retryDelay } from "../src/server/mail/reliabilit
 import { processOutboundMail, processInboundMail } from "../src/server/mail/queue";
 import { discoverCleanup, processMaintenance, requestCustomerRefresh } from "../src/server/maintenance/service";
 import { runScheduled } from "../src/server/maintenance/scheduled";
+import { startBackup, sweepExpiredBackups } from "../src/server/backups/service";
 import { request, signup } from "./helpers";
 
 async function fixture(name: string) {
@@ -280,6 +281,50 @@ describe("Free-plan reliability", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("keeps the workspace export inside the cron's statement budget and spends no queue operations", async () => {
+    const { session } = await fixture("free-backup");
+    await startBackup(env, { organizationId: session.organizationId, userId: session.userId });
+
+    const spy = vi.spyOn(env.DB, "prepare");
+    const inbound = vi.spyOn(env.INBOUND_MAIL_QUEUE, "send");
+    try {
+      // An export advances inside the cron rather than through the maintenance queue,
+      // so it must fit the same statement ceiling every other sweep respects.
+      await runScheduled(env);
+      expect(spy.mock.calls.length).toBeLessThan(40);
+      expect(inbound).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      inbound.mockRestore();
+    }
+
+    // The expiry sweep touches at most five backups a run: each one implies several
+    // R2 deletes on top of its D1 write.
+    const now = Date.now();
+    for (let i = 0; i < 7; i++)
+      await env.DB.prepare(
+        "INSERT INTO backups (id, organization_id, status, object_prefix, size_bytes, row_counts, started_at, completed_at, expires_at, created_at, updated_at) VALUES (?, ?, 'completed', ?, 0, '{}', ?, ?, ?, ?, ?)",
+      )
+        .bind(
+          `bkp_free_${i}`,
+          session.organizationId,
+          `_backups/${session.organizationId}/bkp_free_${i}/`,
+          now - 1000,
+          now - 1000,
+          now - 1000,
+          now - 1000,
+          now - 1000,
+        )
+        .run();
+    await sweepExpiredBackups(env, now);
+    const remaining = await env.DB.prepare(
+      "SELECT count(*) AS n FROM backups WHERE organization_id = ? AND status = 'completed' AND expires_at IS NOT NULL",
+    )
+      .bind(session.organizationId)
+      .first<{ n: number }>();
+    expect(remaining?.n).toBe(2);
   });
 
   it("loads the newest message page and walks older messages without overlap at equal timestamps", async () => {

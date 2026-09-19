@@ -4,6 +4,7 @@ import { discoverCleanup, dispatchMaintenance } from "./service";
 import { enforceTicketRetention } from "./retention";
 import { emitWebhookEvent } from "../webhooks/outbound";
 import { retryDueWebhooks } from "../webhooks/outbound";
+import { advanceBackups, sweepExpiredBackups } from "../backups/service";
 
 export async function runScheduled(env: AppBindings) {
   const now = Date.now();
@@ -65,6 +66,11 @@ export async function runScheduled(env: AppBindings) {
   await dispatchMail(env, "outbound-mail");
   await discoverCleanup(env);
   await enforceTicketRetention(env);
+  // A workspace export is resumed here rather than through the maintenance queue:
+  // dispatchMaintenance no-ops without the MAINTENANCE_QUEUE binding, and backups must
+  // still finish on the free plan. One bounded slice per tick, cursor on the row.
+  await advanceBackups(env);
+  await sweepExpiredBackups(env, now);
   await dispatchMaintenance(env);
 }
 

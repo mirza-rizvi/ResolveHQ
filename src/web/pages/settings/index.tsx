@@ -11,6 +11,7 @@ import { MailDeliverySection } from "./sections/mail-delivery";
 import { ReadinessSection } from "./sections/readiness";
 import { ApiKeysSection } from "./sections/api-keys";
 import { McpSection } from "./sections/mcp";
+import { BackupsSection } from "./sections/backups";
 import { WebhooksSection } from "./sections/webhooks";
 import { SatisfactionSection } from "./sections/satisfaction";
 import { SlaSection } from "./sections/sla";
@@ -62,6 +63,7 @@ export function SettingsPage() {
       <ApiKeysSection canManage={canManage} />
       <McpSection canManage={canManage} />
       <WebhooksSection canManage={canManage} />
+      <BackupsSection canManage={canManage} />
       <AccountSection />
       <MailDeliverySection data={data} />
       <AiSection {...sectionProps} />

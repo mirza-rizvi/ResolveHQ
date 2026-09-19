@@ -826,6 +826,40 @@ export const webhookDeliveries = sqliteTable(
   ],
 );
 
+export const backupStatuses = ["running", "completed", "failed", "expired"] as const;
+
+export const backups = sqliteTable(
+  "backups",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    status: text("status", { enum: backupStatuses }).notNull().default("running"),
+    /** `_backups/<organizationId>/<backupId>/`. Objects beneath it are immutable once written. */
+    objectPrefix: text("object_prefix").notNull(),
+    sizeBytes: integer("size_bytes").notNull().default(0),
+    /** Per-table integrity record, shown in the UI. Point-in-time-ish, not transactional. */
+    rowCounts: text("row_counts", { mode: "json" }).$type<Record<string, number>>().notNull().default({}),
+    /**
+     * Where the export got to. R2 objects are not appendable, so each chunk is its own
+     * object and `seq` names it; `rowId` is the keyset position within the current table.
+     */
+    cursor: text("cursor", { mode: "json" }).$type<{ table: string; rowId: number; seq: number } | null>(),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    error: text("error"),
+    ...timestamps,
+  },
+  (table) => [
+    index("backups_org_started_idx").on(table.organizationId, table.startedAt),
+    // Partial: the expiry sweep only ever looks at rows that have an expiry.
+    index("backups_expiry_idx").on(table.expiresAt).where(sql`${table.expiresAt} IS NOT NULL`),
+  ],
+);
+
 export const settings = sqliteTable(
   "settings",
   {

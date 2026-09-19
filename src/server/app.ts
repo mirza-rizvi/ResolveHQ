@@ -23,6 +23,7 @@ import { csatRoutes } from "./csat/routes";
 import { csatAdminRoutes } from "./csat/admin-routes";
 import { apiKeyRoutes } from "./api-keys/routes";
 import { webhookEndpointRoutes } from "./webhooks/endpoints-routes";
+import { backupRoutes } from "./backups/routes";
 import { privacyRoutes } from "./privacy/routes";
 import { assistantRoutes } from "./assistant/routes";
 
@@ -71,6 +72,7 @@ app.route("/api/auth", authRoutes);
 // Registered before the /api/organization mount so the more specific path wins.
 app.route("/api/organization/api-keys", apiKeyRoutes);
 app.route("/api/organization/webhooks", webhookEndpointRoutes);
+app.route("/api/organization/backups", backupRoutes);
 app.route("/api/organization", organizationRoutes);
 app.route("/api/customers", customerRoutes);
 app.route("/api/tickets", ticketRoutes);

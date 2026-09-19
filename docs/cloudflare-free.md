@@ -60,6 +60,16 @@ After fixing the cause, reset only the reviewed task (replace `REVIEWED_TASK_ID`
 npx wrangler d1 execute DB --remote --command "UPDATE maintenance_tasks SET status = 'pending', attempts = 0, lease_until = 0, dispatch_until = 0, next_attempt_at = 0 WHERE id = 'REVIEWED_TASK_ID' AND status = 'failed'"
 ```
 
+Workspace exports share the attachments bucket rather than adding a second R2 binding, writing under
+the reserved `_backups/` prefix. R2 objects cannot be appended to, so each slice of an export is its
+own numbered object and the download route concatenates them in order; memory stays flat whatever
+the workspace's size. An export advances inside the Cron run, not through the maintenance queue —
+`dispatchMaintenance` no-ops when `MAINTENANCE_QUEUE` is absent, which is the Free-plan case — and
+each run is capped at twelve statements, ten objects and a thousand rows. The expiry sweep marks at
+most five backups per run because each one implies several R2 deletes. Exports are kept for 30 days
+by default and are the only feature that grows R2 storage without an inbound message behind it, so
+the retention window is the thing to lower if the 10 GB allowance gets tight.
+
 ## Remaining limitations
 
 - Authentication, complex MIME, large HTML, and large search documents still require production CPU benchmarking. Native crypto preserves security but cannot promise a Free-plan fit.

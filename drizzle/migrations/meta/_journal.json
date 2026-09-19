@@ -99,6 +99,13 @@
       "when": 1788872400000,
       "tag": "0013_outbound_webhooks",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1788874200000,
+      "tag": "0014_workspace_backups",
+      "breakpoints": true
     }
   ]
 }
