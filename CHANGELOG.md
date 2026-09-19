@@ -2,7 +2,7 @@
 
 All notable changes to ResolveHQ are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.3.0] - 2026-09-20
 
 ### Added
 - Workspace export. **Settings → Workspace export** writes every table in your workspace to newline-delimited JSON in the same Cloudflare R2 bucket your attachments already use, one file per table, downloadable from the page that made it. A large workspace is exported a slice at a time across scheduled runs, so nothing times out, and the page says which table it is on rather than showing a bare spinner. One export at a time per workspace and one per day; keep them for as long as you like (30 days by default) and optionally repeat weekly. **Passwords, API key hashes, webhook signing secrets and bot tokens are never exported**, and neither are sessions or password-reset rows. Attachment files are not included; their records are. It is a point-in-time copy, so rows written after an export starts may be missing. There is deliberately no restore button — a half-applied restore is worse than none — and the deployment guide documents how to load an export back with `wrangler` instead.
@@ -16,6 +16,8 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 - Activity entries now record what kind of actor caused them. An automation rule, an AI suggestion, an API-key request, an inbound customer email, and a scheduled job are each distinguishable from a person acting in the app, and the dashboard activity feed labels the non-human ones. Entries caused by an automation show the rule's name rather than an unknown user.
 
 ### Changed
+- `npm run screenshots` works again. It signs in through the shared session the rest of the browser suite uses; the capture script was still filling in the sign-in form itself, which never appears once a session exists, so the run timed out and the images in the README had not been refreshed since 0.2.0. They now show this release.
+- The demo workspace seeds an API key, a webhook endpoint and the export settings, so those sections show a real row instead of an empty state.
 - The workspace settings page is now a folder of per-section files rather than one file, so the sections arriving in this release do not keep growing a single page. The page itself, its address, and what it shows are unchanged.
 - Activity metadata is filtered before it is stored. A fixed list of sensitive keys — including subjects, message bodies, email addresses, filenames, passwords, tokens, and secrets — is dropped at the single write path, and the entry records which keys were removed. The activity ledger is not covered by customer erasure, so nothing personal should reach it in the first place.
 - `npm run lint` no longer fails when a local checkout contains unrelated project clones under `docs/`. ESLint 10 walks nested directories looking for configuration files; that path is now ignored.

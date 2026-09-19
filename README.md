@@ -41,6 +41,7 @@ More screenshots, including the mobile view and the customer and settings pages,
 - Track volume and response speed in Reports, export any window to CSV, and automate triage with rule-based Automations.
 - Notify agents of assignments and customer replies in-app, and work comfortably in light or dark mode.
 - Export everything stored about a customer as JSON, or erase it with a durable, resumable workflow that cancels queued mail.
+- Take your whole workspace with you. One click exports every table as newline-delimited JSON into your own R2 bucket, a slice at a time so a large workspace finishes without timing out, with per-table downloads and an optional weekly schedule. Passwords, key hashes and webhook secrets are never included.
 - Recover automatically: a five-minute cron job retries stalled mail jobs and cleans up staging and orphaned data.
 - Check whether your deployment actually works: a setup page verifies configuration and looks up the MX, SPF, DKIM, and DMARC records for your inbox domains, telling you what to change when something is missing.
 - Control AI assistance per workspace: it stays off until an admin enables it in Settings, and only then are ticket conversations sent to the configured provider.
@@ -125,6 +126,8 @@ needs `wrangler login` or `CLOUDFLARE_API_TOKEN`.
 ## Not yet implemented
 
 - Multi-language interface and notifications outside the app (email digests).
+- Restoring a workspace export from the app. Exports are one-way on purpose — a restore that half-applies is worse than none — so loading one back is a documented `wrangler` runbook in the [deployment guide](docs/deployment.md#workspace-backups).
+- Write access for AI assistants over MCP. The server is read-only until there is a screen for approving what an assistant wants to send to a real customer.
 
 ## License
 

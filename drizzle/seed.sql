@@ -230,3 +230,48 @@ SELECT
 FROM tickets t
 WHERE t.organization_id = 'org_demo' AND t.status IN ('resolved','closed')
 LIMIT 2;
+
+-- A scoped API key and a webhook endpoint, so the programmable surfaces in Settings
+-- show a real row rather than an empty state. The key hash belongs to no key that was
+-- ever issued: the demo shows metadata, and no request can authenticate with it.
+INSERT OR IGNORE INTO api_keys (id, organization_id, name, prefix, key_hash, scopes, inbox_ids, created_by_user_id, last_used_at, expires_at, revoked_at, created_at, updated_at)
+VALUES
+  (
+    'apk_demo_reporting',
+    'org_demo',
+    'Weekly reporting script',
+    'rhq_live_demo',
+    'demo-never-issued-0000000000000000000000000000000000000000000000000000',
+    '["tickets:read","reports:read"]',
+    NULL,
+    'usr_owner',
+    (CAST(strftime('%s','now') AS INTEGER) * 1000 - 86400000),
+    NULL,
+    NULL,
+    1788192000000,
+    1788192000000
+  );
+
+INSERT OR IGNORE INTO webhook_endpoints (id, organization_id, kind, url, secret, config, events, enabled, failure_count, disabled_at, last_success_at, last_error, created_at, updated_at)
+VALUES
+  (
+    'whe_demo_ops',
+    'org_demo',
+    'generic',
+    'https://ops.northstarlabs.test/hooks/resolvehq',
+    'whsec_demo_never_issued',
+    '{}',
+    '["ticket.created","ticket.sla_breached","csat.received"]',
+    1,
+    0,
+    NULL,
+    (CAST(strftime('%s','now') AS INTEGER) * 1000 - 3600000),
+    NULL,
+    1788192000000,
+    1788192000000
+  );
+
+-- Workspace export configured but not scheduled, so the section shows its controls
+-- without a demo database quietly writing exports to R2.
+INSERT OR IGNORE INTO settings (organization_id, key, value, updated_by_user_id, updated_at)
+VALUES ('org_demo', 'backup_schedule', '{"enabled":false,"retainDays":30}', 'usr_owner', 1788192000000);

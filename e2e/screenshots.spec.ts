@@ -8,13 +8,13 @@ import { expect, test } from "@playwright/test";
 test("capture marketing screenshots of the seeded workspace", async ({ page }) => {
   test.setTimeout(120_000);
 
-  async function login() {
-    await page.goto("/login");
-    await expect(page.getByRole("heading", { name: "Sign in to ResolveHQ" })).toBeVisible();
-    await page.getByLabel("Email").fill("owner@northstarlabs.test");
-    await page.getByLabel("Password").fill("resolve-demo-2026");
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await page.waitForURL(/\/inbox/);
+  /**
+   * The session comes from the `setup` project's saved storage state, so this opens the
+   * inbox directly. Signing in here instead would hang: `/login` redirects straight back
+   * out when a session already exists (src/web/pages/login.tsx).
+   */
+  async function openWorkspace() {
+    await page.goto("/inbox");
     await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
   }
 
@@ -24,7 +24,7 @@ test("capture marketing screenshots of the seeded workspace", async ({ page }) =
     await expect(page.getByLabel("Reply message")).toBeVisible();
   }
 
-  await login();
+  await openWorkspace();
 
   // inbox.png — three-pane inbox with a ticket selected.
   await openSeededTicket();
