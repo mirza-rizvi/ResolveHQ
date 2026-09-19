@@ -299,6 +299,23 @@ Apply the additive migrations before deploying this Worker. Password and session
 
 Previously attempted failed/stalled outbound jobs are conservatively stopped for administrator review because their provider idempotency age is unknown. Review **Settings → Stopped mail** after upgrading. Do not leave old and new Worker versions processing mail concurrently for an extended rollout: older versions do not honor the new retry leases and terminal states. Preserve any existing paid-plan configuration; no Free-specific CPU cap is added.
 
+### Upgrading to 0.3.0 (migrations 0009 to 0014)
+
+Six migrations land together if you are coming from 0.2.0. All are additive — new tables and new
+nullable columns — and nothing in them rewrites or deletes an existing row, so the usual
+`wrangler d1 migrations apply DB --remote` before deploying is enough. Three things to know
+afterwards:
+
+- **Nothing is tracked until you configure it.** With no SLA policy, no ticket is ever marked late;
+  satisfaction ratings stay off until an admin turns them on; no webhook is sent until an endpoint
+  exists.
+- **The cron does more per tick.** Response-target promotion, snooze wake-ups, webhook retries and
+  workspace exports all run in the same five-minute handler, each bounded. No new binding and no new
+  queue is required.
+- **R2 gains a second consumer.** Workspace exports are written to the attachments bucket under
+  `_backups/`. They count against the same storage allowance; the retention window (30 days by
+  default) is what controls how much they accumulate.
+
 ### Case-only duplicate addresses (migrations 0006 and 0007)
 
 Inbox addresses and customer emails were stored case-sensitively before this release, so a database
