@@ -35,5 +35,11 @@ docs/improvement-ideas-from-others/
 .aider*
 *.original.md
 
+# Agent skills: the skill bodies live in .agents/ (ignored above) and are
+# symlinked into .claude/. The lockfile would otherwise be the one part of the
+# setup that reaches the public repo.
+skills-lock.json
+.skills/
+
 # Playwright sign-in state, regenerated each run
 e2e/.auth/
