@@ -1,6 +1,6 @@
 {
   "name": "resolvehq",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Self-hosted helpdesk on Cloudflare Workers: D1, R2, Queues, Email Routing. Shared inbox, email threading, AI assist.",
   "repository": {

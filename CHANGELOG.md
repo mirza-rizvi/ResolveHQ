@@ -4,6 +4,8 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-20
+
 ### Fixed
 - **Sign-up and sign-in failed on every deployed Worker** ([#9](https://github.com/mirza-rizvi/ResolveHQ/issues/9)). Password hashing asked for 310,000 PBKDF2 iterations; the Workers runtime refuses anything above 100,000 and answers `Pbkdf2 failed: iteration counts above 100000 are not supported`. It is a hard ceiling in the runtime, not a CPU budget, so no plan avoided it. Local workerd does not enforce the cap, which is why every test and every local run passed while no deployment could ever create its first account. Derivation now runs at 100,000, the platform maximum.
 - The demo seed carried password hashes at 310,000 iterations, so the documented demo login would have failed on a deployment for the same reason. Both seeded accounts are regenerated at 100,000; the password is unchanged.
