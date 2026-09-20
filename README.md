@@ -69,7 +69,19 @@ The easiest way to get started is with the **Deploy to Cloudflare** button above
 - A domain on Cloudflare, so you can set up Email Routing.
 - Optionally, a Resend account with a verified sending domain, to send outgoing mail.
 
-After deployment, open your ResolveHQ URL and sign up as the owner, giving an optional support email that becomes your default inbox. In the Cloudflare dashboard, add an Email Routing rule sending that address to the deployed Worker, then send a test email to confirm it arrives in the inbox.
+**The button provisions an empty database; it does not create the schema.** Run the migrations once
+against the repository the button created on your account, otherwise signing up fails with
+`database_not_migrated`:
+
+```bash
+npx wrangler d1 migrations apply DB --remote
+curl https://<your-worker>/api/ready   # {"ok":true,"database":"ready"}
+```
+
+Setting the Worker's **Deploy command** to `npm run deploy` in the Cloudflare dashboard makes every
+later deploy migrate first. See the [deployment guide](docs/deployment.md#apply-the-migrations--required-once).
+
+After that, open your ResolveHQ URL and sign up as the owner, giving an optional support email that becomes your default inbox. In the Cloudflare dashboard, add an Email Routing rule sending that address to the deployed Worker, then send a test email to confirm it arrives in the inbox.
 
 See the [deployment guide](docs/deployment.md) for what the deploy flow provisions, required configuration, first-run setup, and manual deployment.
 

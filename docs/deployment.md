@@ -14,7 +14,40 @@ The deployment flow reads `wrangler.jsonc` and provisions everything ResolveHQ n
 - Rate limit namespaces `1001` (auth, 10 requests/minute) and `1002` (writes, 120 requests/minute)
 - A cron trigger that runs every 5 minutes
 
-The flow reads the active entries in `.dev.vars.example`: supply a unique `SESSION_PEPPER` (at least 32 random characters) and keep `DEV_MAIL_MODE=disabled`. Configure optional `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `SYSTEM_MAIL_FROM`, and `APP_URL` afterward in Worker secrets/settings; commented example entries are not configuration. D1 migrations are applied as part of `npm run deploy` (`wrangler d1 migrations apply DB --remote`, then `wrangler deploy`), which the deploy flow runs on your behalf.
+The flow reads the active entries in `.dev.vars.example`: supply a unique `SESSION_PEPPER` (at least 32 random characters) and keep `DEV_MAIL_MODE=disabled`. Configure optional `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `SYSTEM_MAIL_FROM`, and `APP_URL` afterward in Worker secrets/settings; commented example entries are not configuration.
+
+### Apply the migrations — required, once
+
+**The button does not create the database schema.** It provisions an empty D1 and hands the build
+to [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), whose deploy command
+defaults to a plain `wrangler deploy`. `npm run deploy` in this repository does chain the migration
+step, but nothing calls that script for you. Until the migrations are applied, every request that
+touches a table fails and the app answers:
+
+```json
+{ "error": { "code": "database_not_migrated", "message": "The database schema is missing. Apply the migrations, then retry: npx wrangler d1 migrations apply DB --remote" } }
+```
+
+Fix it once, from a checkout of the repository the button created on your account:
+
+```bash
+npx wrangler d1 migrations apply DB --remote
+```
+
+Then confirm, which answers without signing in:
+
+```bash
+curl https://<your-worker>/api/ready
+# {"ok":true,"database":"ready"}
+```
+
+A `503` with `"database":"unmigrated"` names how many tables are missing and repeats the command.
+
+To stop this recurring on every future deploy, open the Worker in the Cloudflare dashboard and set
+**Settings → Build → Deploy command** to `npm run deploy`. Workers Builds then applies migrations
+before each deployment, the same way the GitHub Actions workflow in this repository does. Workers
+Builds does not read build or deploy commands from `wrangler.jsonc`, so this has to be set in the
+dashboard.
 
 AI assistance supports two providers. Cloudflare Workers AI is preferred when its binding exists: uncomment the `ai` block in `wrangler.jsonc` and redeploy; no credential is required, `WORKERS_AI_MODEL` overrides the text model (default `@cf/meta/llama-4-scout-17b-16e-instruct`) and `AI_GATEWAY_ID` routes the calls through an AI Gateway. Otherwise add `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default `gpt-4o-mini`) as Worker secrets. The binding wins whenever both are present. The block ships commented out because, once it is present, the local dev server opens a remote proxy for Workers AI and refuses to start without `wrangler login` or `CLOUDFLARE_API_TOKEN`.
 

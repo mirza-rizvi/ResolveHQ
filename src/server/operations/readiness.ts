@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { createDb } from "../db";
+import { missingTables, MIGRATE_COMMAND } from "../db/health";
 import { inboxes, organizations, settings } from "../db/schema";
 import type { AppBindings } from "../types";
 
@@ -245,6 +246,48 @@ function mailProviderOf(env: AppBindings): MailProvider {
   return "none";
 }
 
+/**
+ * Catches the half-upgraded deployment: new Worker code, old database. Signing in only
+ * proves the tables the session path touches exist, so this compares the whole schema.
+ */
+async function checkDatabaseSchema(env: AppBindings): Promise<ReadinessCheck> {
+  const id = "config.database_schema";
+  const label = "Database schema";
+  let missing: string[];
+  try {
+    missing = await missingTables(env.DB);
+  } catch {
+    return {
+      id,
+      group: "configuration",
+      label,
+      advisory: false,
+      status: "unknown",
+      detail: "The database could not be read, so its schema could not be checked.",
+      observed: "Found: no response from D1",
+    };
+  }
+  if (missing.length === 0)
+    return {
+      id,
+      group: "configuration",
+      label,
+      advisory: false,
+      status: "ready",
+      detail: "Every table this version of ResolveHQ expects is present.",
+      observed: "Found: schema up to date",
+    };
+  return {
+    id,
+    group: "configuration",
+    label,
+    advisory: false,
+    status: "failed",
+    detail: `This deployment is running newer code than its database. Apply the migrations, then re-check: ${MIGRATE_COMMAND}`,
+    observed: `Found: ${missing.length} missing table(s) — ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? "…" : ""}`,
+  };
+}
+
 function configurationChecks(env: AppBindings, provider: MailProvider, inboxCount: number): ReadinessCheck[] {
   const checks: ReadinessCheck[] = [];
 
@@ -393,6 +436,7 @@ export async function evaluateReadiness(
   )].sort();
 
   const checks = configurationChecks(env, provider, activeInboxes.length);
+  checks.unshift(await checkDatabaseSchema(env));
   for (const domain of domains) {
     const [mx, spf, dkim, dmarc] = await Promise.all([
       checkMx(domain, fetchImpl),

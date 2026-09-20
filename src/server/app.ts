@@ -5,6 +5,7 @@ import type { HonoEnv } from "./types";
 import { authRoutes } from "./auth/routes";
 import { organizationRoutes } from "./organizations/routes";
 import { HttpError } from "./http/errors";
+import { isMissingSchemaError, missingTables, MIGRATE_COMMAND } from "./db/health";
 import { requireApiKey } from "./auth/api-key";
 import { mcpRoutes } from "./mcp/routes";
 import { customerRoutes } from "./customers/routes";
@@ -62,11 +63,26 @@ app.use("/api/*", async (context, next) => {
 
 app.get("/api/health", (context) => context.json({ ok: true, service: "resolvehq" }));
 app.get("/api/ready", async (context) => {
-  const database = await context.env.DB.prepare("SELECT 1 AS ready").first<{ ready: number }>();
-  return context.json(
-    { ok: database?.ready === 1, database: database?.ready === 1 ? "ready" : "unavailable" },
-    database?.ready === 1 ? 200 : 503,
-  );
+  // `SELECT 1` answers on a database with no tables at all, which is exactly what a
+  // freshly provisioned D1 looks like when the migrations were never applied. Readiness
+  // has to mean "this schema can serve requests", so the tables are what is checked.
+  let missing: string[];
+  try {
+    missing = await missingTables(context.env.DB);
+  } catch {
+    return context.json({ ok: false, database: "unavailable" }, 503);
+  }
+  if (missing.length > 0)
+    return context.json(
+      {
+        ok: false,
+        database: "unmigrated",
+        missingTables: missing.slice(0, 5),
+        detail: `The database is missing ${missing.length} table(s). Apply the migrations: ${MIGRATE_COMMAND}`,
+      },
+      503,
+    );
+  return context.json({ ok: true, database: "ready" });
 });
 app.route("/api/auth", authRoutes);
 // Registered before the /api/organization mount so the more specific path wins.
@@ -159,6 +175,26 @@ app.onError((error, context) => {
         },
       },
       400,
+    );
+  }
+  // A Worker deployed against a database whose migrations never ran fails here on every
+  // request that touches a table. Saying so beats "Something went wrong": the operator
+  // cannot guess the cause, and this is the first thing a fresh deployment hits.
+  if (isMissingSchemaError(error)) {
+    console.error({
+      event: "database_not_migrated",
+      requestId: context.get("requestId"),
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return context.json(
+      {
+        error: {
+          code: "database_not_migrated",
+          message: `The database schema is missing. Apply the migrations, then retry: ${MIGRATE_COMMAND}`,
+          requestId: context.get("requestId"),
+        },
+      },
+      503,
     );
   }
   console.error({

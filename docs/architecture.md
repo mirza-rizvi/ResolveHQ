@@ -25,6 +25,7 @@ Cron ───────────> outbox reconciliation, expired sessions/
 
 ## Modules
 
+- `src/server/db`: the Drizzle schema and its health checks. `health.ts` derives the set of tables the running code expects from the schema module itself rather than a hand-kept list, so a new table cannot outrun the check, and recognises D1's `no such table` through Drizzle's wrapper — whose own message says only `Failed query`. An unmigrated database is therefore a `503 database_not_migrated` naming the command that fixes it, never a blank `500`, and `/api/ready` reports `unmigrated` rather than green.
 - `src/server/auth`: passwords, sessions, CSRF, and rate limiting.
 - `src/server/organizations`: organizations, memberships, invitations, and roles.
 - `src/server/customers`: customer profiles and history.
