@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { advanceBackup, EXPORT_TABLES, sweepExpiredBackups } from "resolve-server/backups/service";
+import { READINESS_CACHE_KEY } from "resolve-server/operations/readiness";
 import { runScheduled } from "resolve-server/maintenance/scheduled";
 import { request, signup, type TestSession } from "./helpers";
 
@@ -229,9 +230,12 @@ describe("workspace backups", () => {
     const deleted = await request(`/organization/backups/${backup.id}`, { method: "DELETE" }, workspace);
     expect(deleted.status).toBe(204);
     expect((await env.ATTACHMENTS.list({ prefix })).objects).toHaveLength(0);
-    expect(
-      await env.DB.prepare("SELECT id FROM backups WHERE id = ?").bind(backup.id).first<{ id: string }>(),
-    ).toBeNull();
+
+    // The record stays, marked expired: it is what the one-per-day cap counts, and
+    // removing it turned start-then-delete into an unlimited loop. Nothing is
+    // downloadable once the objects are gone.
+    expect((await readBackup(backup.id)).status).toBe("expired");
+    expect((await download(workspace, backup.id, "tickets")).status).toBe(404);
   });
 
   it("scopes listing and download to the owning workspace", async () => {
@@ -276,6 +280,68 @@ describe("workspace backups", () => {
     expect(after.status === "running" || after.status === "completed").toBe(true);
     expect(Object.keys(after.rowCounts).length).toBeGreaterThanOrEqual(Object.keys(before.rowCounts).length);
     expect(after.cursor?.table ?? "done").not.toBe(before.cursor?.table ?? "start");
+  });
+
+  it("drops the readiness cache from the settings export", async () => {
+    const workspace = await signup("backup-settings-redaction");
+    await env.DB.prepare(
+      "INSERT INTO settings (organization_id, key, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(organization_id, key) DO UPDATE SET value = excluded.value",
+    )
+      .bind(workspace.organizationId, READINESS_CACHE_KEY, JSON.stringify({ checkedAt: 1, results: [] }), Date.now())
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO settings (organization_id, key, value, updated_at) VALUES (?, 'ai.enabled', 'true', ?) ON CONFLICT(organization_id, key) DO UPDATE SET value = excluded.value",
+    )
+      .bind(workspace.organizationId, Date.now())
+      .run();
+
+    const backup = await startBackup(workspace);
+    await runToCompletion(backup.id);
+    const rows = await downloadLines(workspace, backup.id, "settings");
+
+    // The redaction compared a literal that never matched the real key, so this row
+    // was being exported while a comment claimed otherwise.
+    expect(rows.some((row) => row.key === READINESS_CACHE_KEY)).toBe(false);
+    expect(rows.some((row) => row.key === "ai.enabled")).toBe(true);
+  });
+
+  it("keeps a deleted backup's record so the daily cap still counts it", async () => {
+    const workspace = await signup("backup-delete-cap");
+    const backup = await startBackup(workspace);
+    await runToCompletion(backup.id);
+
+    expect((await request(`/organization/backups/${backup.id}`, { method: "DELETE" }, workspace)).status).toBe(204);
+
+    // Start-then-delete used to reset the cap, because the cap reads the row the delete
+    // removed.
+    const again = await request("/organization/backups", { method: "POST" }, workspace);
+    expect(again.status).toBe(429);
+    expect(((await again.json()) as { error: { code: string } }).error.code).toBe("backup_daily_limit");
+  });
+
+  it("reclaims the objects of a failed export", async () => {
+    const workspace = await signup("backup-failed-sweep");
+    await seedTicket(workspace, "backup-failed-sweep");
+    const backup = await startBackup(workspace);
+    await advanceBackup(env, backup.id, TINY);
+
+    const prefix = (
+      await env.DB.prepare("SELECT object_prefix AS prefix FROM backups WHERE id = ?")
+        .bind(backup.id)
+        .first<{ prefix: string }>()
+    )?.prefix as string;
+    expect((await env.ATTACHMENTS.list({ prefix })).objects.length).toBeGreaterThan(0);
+
+    // A failed export used to keep its partial chunks in R2 with no expiry and nothing
+    // that would ever remove them.
+    const old = Date.now() - 2 * 86400000;
+    await env.DB.prepare("UPDATE backups SET status = 'failed', error = 'boom', updated_at = ? WHERE id = ?")
+      .bind(old, backup.id)
+      .run();
+    await sweepExpiredBackups(env, Date.now());
+
+    expect((await readBackup(backup.id)).status).toBe("expired");
+    expect((await env.ATTACHMENTS.list({ prefix })).objects).toHaveLength(0);
   });
 
   it("serves the export as newline-delimited JSON", async () => {

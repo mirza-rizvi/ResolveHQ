@@ -174,6 +174,20 @@ describe("API key authentication", () => {
     expect(empty.tickets).toHaveLength(0);
     // Reported as missing rather than forbidden, so the response confirms nothing.
     expect((await asKey(`/tickets/${ticket.id}`, elsewhere.key)).status).toBe(404);
+
+    // Search reads the same tickets under the same tickets:read scope. It carried no
+    // inbox predicate at all, so the restriction was one query away from meaningless:
+    // subjects from every inbox came back to a key scoped to one.
+    const term = ticket.subject.split(" ")[0];
+    const searched = (await (await asKey(`/search?q=${encodeURIComponent(term)}`, elsewhere.key)).json()) as {
+      results: Array<{ id: string }>;
+    };
+    expect(searched.results.map((entry) => entry.id)).not.toContain(ticket.id);
+
+    const allowedSearch = (await (await asKey(`/search?q=${encodeURIComponent(term)}`, allowed.key)).json()) as {
+      results: Array<{ id: string }>;
+    };
+    expect(allowedSearch.results.map((entry) => entry.id)).toContain(ticket.id);
   });
 
   it("does not let one organization's key read another's tickets", async () => {

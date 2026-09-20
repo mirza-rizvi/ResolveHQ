@@ -148,7 +148,8 @@ export function BackupsSection({ canManage }: { canManage: boolean }) {
 
         <p className="settings-note">
           Point-in-time: rows written after an export starts may not be included. Attachment files are not included;
-          their records are. Signing secrets, API key hashes and passwords are never exported.
+          their records are. Signing secrets, API key hashes and passwords are never exported. Erasing a customer
+          does not reach into an export already taken, so delete exports made before an erasure request.
         </p>
 
         <Button onClick={() => void create()} disabled={busy || running}>

@@ -258,6 +258,12 @@ const getCustomer: McpTool = {
           customerId
             ? eq(customers.id, customerId)
             : eq(sql`lower(${customers.email})`, normalizeIdentity(email)),
+          // A restricted key may only see customers it could reach through its own
+          // inboxes. Without this the tool confirmed the existence of, and returned every
+          // known address for, any customer in the workspace.
+          context.inboxIds
+            ? sql`exists (select 1 from tickets t where t.customer_id = ${customers.id} and t.organization_id = ${context.organizationId} and t.inbox_id in ${context.inboxIds.length ? context.inboxIds : [""]})`
+            : undefined,
         ),
       )
       .limit(1);

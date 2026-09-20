@@ -22,6 +22,8 @@ interface JsonRpcRequest {
 
 const PARSE_ERROR = -32700;
 const INVALID_REQUEST = -32600;
+/** One HTTP request is one rate-limit token, so a batch cannot be unbounded. */
+const MAX_BATCH_CALLS = 20;
 const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
@@ -58,6 +60,13 @@ mcpRoutes.post("/", requireApiKey, async (context) => {
 
   // Batches are part of JSON-RPC; a client that sends one gets one back.
   if (Array.isArray(payload)) {
+    // The rate limit is checked once per HTTP request, so an unbounded batch turned one
+    // token into arbitrarily many FTS and LIKE scans against the tenant's own D1 budget.
+    if (payload.length > MAX_BATCH_CALLS)
+      return context.json(
+        failure(null, INVALID_REQUEST, `A batch may contain at most ${MAX_BATCH_CALLS} calls.`),
+        400,
+      );
     const responses = [];
     for (const entry of payload) {
       const response = await dispatch(entry, {

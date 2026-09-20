@@ -3,7 +3,12 @@
   "name": "resolvehq",
   "main": "worker.ts",
   "compatibility_date": "2026-08-01",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public: a fetch() to this deployment's own zone loops back to
+  // Cloudflare's front door instead of being routed to the zone's origin, which would
+  // otherwise bypass Cloudflare security settings. It narrows what a tenant-supplied
+  // webhook URL can reach; it is not a private-address block, so the checks in
+  // src/server/webhooks/destination.ts still carry that job.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",

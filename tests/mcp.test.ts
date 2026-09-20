@@ -375,13 +375,39 @@ describe("MCP authorization", () => {
     });
     expect((toolResult(queues) as { queues: { all: number } }).queues.all).toBe(0);
 
+    // The customer used to come back with name, company and every known email address,
+    // because only the recentTickets sub-query carried the inbox filter. A key that can
+    // see none of a customer's tickets must not be able to confirm the customer exists.
     const customer = await rpc(key, {
       jsonrpc: "2.0",
       id: 4,
       method: "tools/call",
       params: { name: "get_customer", arguments: { customerId } },
     });
-    // The customer is visible, but none of their tickets are.
-    expect((toolResult(customer) as { recentTickets: unknown[] }).recentTickets).toHaveLength(0);
+    expect(toolResult(customer)).toEqual({ error: "not_found" });
+  });
+
+  it("refuses an oversized batch instead of spending one token on many queries", async () => {
+    const workspace = await signup("mcp-batch-cap");
+    await seedTicket(workspace, "batch");
+    const key = await mcpKey(workspace, { name: "Batch" });
+
+    const batch = Array.from({ length: 25 }, (_, index) => ({
+      jsonrpc: "2.0",
+      id: index + 1,
+      method: "tools/call",
+      params: { name: "search_tickets", arguments: {} },
+    }));
+    const response = await rawCall(key, JSON.stringify(batch));
+    expect(response.status).toBe(400);
+
+    // The rate limit is checked once per HTTP request, so an unbounded batch was a
+    // multiplier on the workspace's own D1 budget.
+    const within = await rawCall(
+      key,
+      JSON.stringify(batch.slice(0, 3)),
+    );
+    expect(within.status).toBe(200);
+    expect((await within.json()) as unknown[]).toHaveLength(3);
   });
 });

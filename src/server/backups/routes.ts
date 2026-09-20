@@ -122,6 +122,12 @@ backupRoutes.delete("/:id", async (context) => {
   const tenant = context.get("tenant");
   const backup = await assertBackup(context.env.DB, tenant.organizationId, context.req.param("id"));
   await deleteObjects(context.env, backup.objectPrefix);
-  await createDb(context.env.DB).delete(backups).where(eq(backups.id, backup.id));
+  // The row is kept and marked expired rather than deleted. Deleting it also deleted the
+  // only record the one-per-day cap reads, so start-then-delete looped without limit.
+  // Nothing is downloadable once the objects are gone, which is what "deleted" has to mean.
+  await createDb(context.env.DB)
+    .update(backups)
+    .set({ status: "expired", sizeBytes: 0, cursor: null, error: null })
+    .where(eq(backups.id, backup.id));
   return context.body(null, 204);
 });

@@ -1,6 +1,7 @@
 import type { AppBindings } from "../types";
 import { HttpError } from "../http/errors";
 import { newId } from "../lib/id";
+import { READINESS_CACHE_KEY } from "../operations/readiness";
 
 /**
  * How a table is narrowed to one workspace. Everything is keyset-paginated by `rowid`
@@ -76,7 +77,10 @@ export const EXPORT_TABLES: ExportTable[] = [
   {
     table: "settings",
     scope: "organization",
-    redact: (row) => (row.key === "readiness_cache" ? null : row),
+    // Compare against the exported constant, not a literal. This shipped as
+    // "readiness_cache" against a key that is actually "readiness.cache", so the
+    // branch never fired and no test noticed.
+    redact: (row) => (row.key === READINESS_CACHE_KEY ? null : row),
   },
 ];
 
@@ -86,6 +90,10 @@ const MIN_RETAIN_DAYS = 1;
 const MAX_RETAIN_DAYS = 365;
 const DAY_MS = 86_400_000;
 const AUTO_BACKUP_INTERVAL_MS = 7 * DAY_MS;
+/** A failed export keeps its partial chunks briefly for diagnosis, then they are reclaimed. */
+const FAILED_RETENTION_MS = DAY_MS;
+/** A running export that has not advanced for this long is treated as abandoned. */
+const ABANDONED_RUNNING_MS = 6 * 60 * 60 * 1000;
 
 // A cron tick shares its D1 budget with every other sweep, so an export takes a slice
 // and leaves. The query cap is what keeps `runScheduled` well inside the Free-plan
@@ -340,8 +348,11 @@ export async function deleteObjects(env: AppBindings, prefix: string): Promise<v
  * starts one for a workspace that is due. Bounded like every other cron step.
  */
 export async function advanceBackups(env: AppBindings, limits: AdvanceLimits = {}): Promise<void> {
+  // Ordered by least-recently-advanced, not by start time: with ORDER BY started_at a
+  // single large or fast-growing workspace holds the only slot indefinitely and every
+  // other tenant's export makes no progress at all.
   const running = await env.DB.prepare(
-    "SELECT id FROM backups WHERE status = 'running' ORDER BY started_at LIMIT 1",
+    "SELECT id FROM backups WHERE status = 'running' ORDER BY updated_at LIMIT 1",
   ).first<{ id: string }>();
   if (running) {
     await advanceBackup(env, running.id, limits);
@@ -364,14 +375,26 @@ export async function advanceBackups(env: AppBindings, limits: AdvanceLimits = {
 
 /** Marks due backups expired and removes their objects. Five at a time: each implies several R2 deletes. */
 export async function sweepExpiredBackups(env: AppBindings, now: number): Promise<void> {
+  // Three kinds of reclaimable backup, not one:
+  //   completed and past its expiry;
+  //   failed, whose partial chunks were previously left in R2 forever because the sweep
+  //     only ever looked at completed rows;
+  //   running but abandoned, which a Worker that died mid-chunk leaves behind and which
+  //     would otherwise hold the single advance slot and its objects indefinitely.
   const due = await env.DB.prepare(
-    "SELECT id, object_prefix AS objectPrefix FROM backups WHERE expires_at IS NOT NULL AND expires_at <= ? AND status = 'completed' ORDER BY expires_at LIMIT 5",
+    `SELECT id, object_prefix AS objectPrefix FROM backups
+       WHERE (status = 'completed' AND expires_at IS NOT NULL AND expires_at <= ?)
+          OR (status = 'failed' AND updated_at <= ?)
+          OR (status = 'running' AND updated_at <= ?)
+       ORDER BY updated_at LIMIT 5`,
   )
-    .bind(now)
+    .bind(now, now - FAILED_RETENTION_MS, now - ABANDONED_RUNNING_MS)
     .all<{ id: string; objectPrefix: string }>();
   for (const backup of due.results ?? []) {
     await deleteObjects(env, backup.objectPrefix);
-    await env.DB.prepare("UPDATE backups SET status = 'expired', size_bytes = 0, updated_at = ? WHERE id = ?")
+    await env.DB.prepare(
+      "UPDATE backups SET status = 'expired', size_bytes = 0, cursor = NULL, updated_at = ? WHERE id = ?",
+    )
       .bind(now, backup.id)
       .run();
   }

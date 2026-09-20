@@ -197,13 +197,17 @@ describe("outbound webhook delivery", () => {
   it("retries with backoff, abandons after six attempts, and disables a persistently failing endpoint", async () => {
     const workspace = await signup("wh-retry");
     const { endpoint } = await endpointFor(workspace);
-    respondWith = () => new Response("nope", { status: 502, statusText: "Bad Gateway" });
+    respondWith = () => new Response("SECRET-INTERNAL-BODY", { status: 502, statusText: "Bad Gateway" });
     await seedTicket(workspace, "retry");
 
     let rows = await deliveries(workspace.organizationId);
     expect(rows.results[0].status).toBe("pending");
     expect(rows.results[0].attempts).toBe(1);
     expect(rows.results[0].lastError).toContain("502");
+    // The destination's response body is never stored or relayed. It used to be, 200
+    // bytes of it, which the list and test routes handed straight back — turning a
+    // tenant-supplied URL into a readable probe rather than a blind one.
+    expect(rows.results[0].lastError).not.toContain("SECRET-INTERNAL-BODY");
     // First backoff is fifteen seconds.
     expect(rows.results[0].nextAttemptAt! - Date.now()).toBeGreaterThan(10_000);
 

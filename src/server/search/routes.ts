@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { requireAuth } from "resolve-server/auth/middleware";
 import { createDb } from "resolve-server/db";
@@ -10,6 +10,7 @@ export const searchRoutes = new Hono<HonoEnv>();
 searchRoutes.use("*", requireAuth);
 searchRoutes.get("/", async (context) => {
   const tenant = context.get("tenant");
+  const keyInboxes = context.get("apiKey")?.inboxIds ?? null;
   const query = context.req.query("q")?.trim().toLowerCase() ?? "";
   if (query.length < 2) return context.json({ results: [] });
   const ftsQuery = toFtsQuery(query);
@@ -34,6 +35,10 @@ searchRoutes.get("/", async (context) => {
     .where(
       and(
         eq(tickets.organizationId, tenant.organizationId),
+        // An inbox-restricted API key must not read subjects from inboxes it was not
+        // given. The ticket routes enforce this; search did not, so the restriction was
+        // one query away from meaningless.
+        keyInboxes ? (keyInboxes.length ? inArray(tickets.inboxId, keyInboxes) : sql`0`) : undefined,
         sql`${tickets.id} in (select ticket_id from ticket_search where organization_id = ${tenant.organizationId} and ticket_search match ${ftsQuery})`,
       ),
     )

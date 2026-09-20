@@ -4,11 +4,24 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Security
+- The deployment guide now states plainly what a webhook destination check does and does not do: it is lexical and resolves no DNS, so a hostname pointing at private space is not refused by that code. Cloudflare's egress and `global_fetch_strictly_public` are what stand behind it.
+- The deployment guide and the export page now say that erasing a customer does not reach into exports already taken. Delete exports made before an erasure request, or shorten the retention window.
+- `global_fetch_strictly_public` is enabled. A request this Worker makes to its own zone now loops back through Cloudflare's front door instead of being routed straight to the origin, where it would bypass Cloudflare's security settings. It narrows what a tenant-supplied webhook URL can reach; it is not a private-address block, so the checks in `src/server/webhooks/destination.ts` still carry that job.
+
 ### Added
 - `npm run smoke -- <url>` smoke-tests a deployed Worker: that it responds, that its database has a schema, and that the app shell is served. With `--signup` it also creates one throwaway workspace and signs in with it, which is the only check that exercises password hashing on real infrastructure. Every other gate in the project runs against local `workerd`, which does not enforce some limits the production runtime does; that gap shipped both the 310,000-iteration PBKDF2 failure and an unmigrated database.
 - CI now runs the Playwright suite as its own job, on a browser it installs itself, and uploads the report when it fails. The browser tests previously ran only on a developer's machine, which is how a broken screenshot spec went unnoticed for days.
 
 ### Fixed
+- **A webhook endpoint no longer reads its target's response back to you.** A failed delivery stored the first 200 bytes of the response body, and the endpoint list and test routes returned it. Combined with destination checks that resolve no DNS, that made a tenant-supplied URL a readable probe rather than a blind one. Only the status is kept now.
+- **An API key restricted to particular inboxes is now restricted in search too.** The ticket routes enforced it; `/api/v1/search` carried no inbox predicate at all, so a key scoped to one inbox could read subjects from every inbox under the same `tickets:read` scope.
+- **The MCP `get_customer` tool honours the key's inbox restriction.** Only its recent-tickets sub-query was filtered, so a restricted key could confirm any customer in the workspace existed and read their name, company and every known email address.
+- **An MCP JSON-RPC batch is capped at 20 calls.** The rate limit is checked once per HTTP request, so an unbounded batch turned one token into arbitrarily many searches against the workspace's own database budget.
+- **A failed or abandoned workspace export no longer leaves its partial data in storage forever.** The expiry sweep only ever looked at completed exports; it now also reclaims failed ones after a day and exports that have not advanced for six hours.
+- **Deleting an export keeps its record**, marked expired, because the record is what the one-per-day cap counts. Deleting it turned start-then-delete into an unlimited loop. Nothing is downloadable once the objects are gone.
+- **One workspace can no longer starve every other one's export.** The scheduled run picked the oldest running export, so a large or fast-growing workspace held the only slot indefinitely; it now picks the least recently advanced.
+- **The settings export dropped the wrong key.** It compared `readiness_cache` against a key that is actually `readiness.cache`, so the cached readiness report was exported while a comment claimed it was excluded. It now uses the exported constant.
 - `/api/ready` no longer returns the names of missing tables to unauthenticated callers. The endpoint stays unauthenticated on purpose, so an operator can check a deployment before signing in, but it now reports only how many tables are missing.
 
 

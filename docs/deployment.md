@@ -190,6 +190,20 @@ function verify(secret, header, rawBody) {
 Verify against the **raw** body, before parsing it: re-serialising JSON changes the bytes and the
 signature will not match.
 
+### What a webhook destination check does and does not do
+
+The checks in `src/server/webhooks/destination.ts` are **lexical**. They parse the URL and refuse
+private, loopback, link-local, carrier-grade-NAT, unique-local and cloud-metadata literals in both
+IPv4 and IPv6 spellings, including the decimal, octal and hex encodings that `URL` normalises for
+them. They do **not** resolve DNS. A hostname that resolves to a private address is not refused by
+this code; what stops it reaching anything is Cloudflare's egress, which does not route to private
+space, plus `global_fetch_strictly_public`, which keeps a request to your own zone from bypassing
+Cloudflare's security settings.
+
+Treat the check as one layer, not a guarantee, and do not add a webhook endpoint you would not be
+willing to let a Worker POST to. A failed delivery records only the HTTP status, never the response
+body, so a destination cannot be used to read back what answered it.
+
 ### What ResolveHQ refuses to send to
 
 Destinations are validated when you save them **and again immediately before every send**, because
@@ -240,6 +254,14 @@ time per workspace, one per day. Turn on the weekly schedule and set how long ex
 What is **not** in an export: attachment files (their database records are included), session and
 password-reset rows, API key hashes, webhook signing secrets and bot tokens, and passwords. It is a
 point-in-time-ish copy — rows written after the export starts may not be included.
+
+### Exports and customer erasure
+
+An export is a point-in-time copy, and erasing a customer does **not** reach into exports already
+written. If you accept an erasure request, delete the workspace exports taken before it, under
+**Settings → Workspace export**, or the erased data stays downloadable by any admin until those
+exports expire. The retention window, 30 days by default, is the upper bound on how long that lasts;
+shorten it if you handle erasure requests routinely.
 
 ### Restoring
 

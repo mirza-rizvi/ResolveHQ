@@ -32,7 +32,6 @@ export const MAX_ATTEMPTS = 6;
 export const AUTO_DISABLE_AFTER = 10;
 const SEND_TIMEOUT_MS = 10_000;
 /** Only the status is needed; a huge body must not be read into memory. */
-const MAX_RESPONSE_BYTES = 2048;
 
 /**
  * Records and attempts one event for every subscribed endpoint.
@@ -142,17 +141,15 @@ async function send(env: AppBindings, endpoint: WebhookEndpoint, payload: Webhoo
       return { ok: false, status: 410, error: "The endpoint reported it is gone.", terminal: true };
     if (response.ok) return { ok: true, status: response.status };
 
-    let detail = "";
-    try {
-      detail = (await response.text()).slice(0, MAX_RESPONSE_BYTES);
-    } catch {
-      /* The status alone is enough. */
-    }
+    // The body is deliberately not read. It used to be stored on the endpoint and
+    // returned by the list and test routes, which turned a destination into a readable
+    // probe: status plus 200 bytes of whatever answered. The status is what an operator
+    // needs to fix a broken endpoint; the body is the target's, not ours to relay.
     const retryAfter = response.headers.get("retry-after");
     return {
       ok: false,
       status: response.status,
-      error: `${response.status} ${response.statusText}${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+      error: `${response.status} ${response.statusText}`.trim(),
       retryAfterMs: retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : undefined,
     };
   } catch (reason) {
