@@ -4,6 +4,8 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-20
+
 ### Fixed
 - Signing up on a deployment made with the **Deploy to Cloudflare** button failed with "Something went wrong" ([#9](https://github.com/mirza-rizvi/ResolveHQ/issues/9)). The button provisions an empty database and never creates the schema — the deployment guide claimed it ran `npm run deploy`, which it does not — so the first query died on a table that was never made. The README and the guide now say to apply the migrations once, and how to make every later deploy do it automatically.
 - A request that fails because the database has no schema now answers `503 database_not_migrated` and names the command that fixes it, instead of a blank `500`. The message reaches the sign-up form, so the person in front of it can see what is wrong.
