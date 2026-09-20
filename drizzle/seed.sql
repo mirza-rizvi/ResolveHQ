@@ -8,8 +8,8 @@ VALUES ('inb_demo', 'org_demo', 'Support', 'support@northstarlabs.test', 'cloudf
 
 INSERT OR IGNORE INTO users (id, email, name, password_hash, created_at, updated_at)
 VALUES
-  ('usr_owner', 'owner@northstarlabs.test', 'Maya Chen', 'pbkdf2-sha256$310000$5YVp6WPqIjWJg4XXdTp-hg$tBZNVDTyqpuZWFVeu3sjpTjVX-05QRkhCDw5HLI-Guk', 1788192000000, 1788192000000),
-  ('usr_agent', 'alex@northstarlabs.test', 'Alex Morgan', 'pbkdf2-sha256$310000$5YVp6WPqIjWJg4XXdTp-hg$tBZNVDTyqpuZWFVeu3sjpTjVX-05QRkhCDw5HLI-Guk', 1788192000000, 1788192000000);
+  ('usr_owner', 'owner@northstarlabs.test', 'Maya Chen', 'pbkdf2-sha256$100000$5YVp6WPqIjWJg4XXdTp-hg$9NzGpepQAsyPuGw8yD2hvw5mxDNzxjvypPlG-APViaI', 1788192000000, 1788192000000),
+  ('usr_agent', 'alex@northstarlabs.test', 'Alex Morgan', 'pbkdf2-sha256$100000$5YVp6WPqIjWJg4XXdTp-hg$9NzGpepQAsyPuGw8yD2hvw5mxDNzxjvypPlG-APViaI', 1788192000000, 1788192000000);
 
 INSERT OR IGNORE INTO organization_memberships (organization_id, user_id, role, created_at)
 VALUES ('org_demo', 'usr_owner', 'owner', 1788192000000), ('org_demo', 'usr_agent', 'agent', 1788192000000);

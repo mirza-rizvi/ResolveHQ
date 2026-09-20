@@ -16,7 +16,7 @@ describe("authentication", () => {
   });
 
   it("keeps the documented local demo credential in sync with the seed", async () => {
-    const seededHash = "pbkdf2-sha256$310000$5YVp6WPqIjWJg4XXdTp-hg$tBZNVDTyqpuZWFVeu3sjpTjVX-05QRkhCDw5HLI-Guk";
+    const seededHash = "pbkdf2-sha256$100000$5YVp6WPqIjWJg4XXdTp-hg$9NzGpepQAsyPuGw8yD2hvw5mxDNzxjvypPlG-APViaI";
     expect(await verifyPassword("resolve-demo-2026", seededHash, "replace-with-at-least-32-random-characters")).toBe(
       true,
     );

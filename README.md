@@ -59,7 +59,7 @@ ResolveHQ runs as a single Cloudflare Worker in your own account. Hono serves bo
 
 ## How much does it cost?
 
-ResolveHQ can run on Cloudflare’s Free plan for small deployments, provided usage stays within the current limits for Workers, D1, R2, Queues, Cron Triggers, and Email Routing. CPU-intensive authentication or mail parsing may require Workers Paid; benchmark your deployment. Queues are available on Workers Free. R2 requires account activation and billing setup separately. Resend handles outbound email under its own limits. See the [Free-plan audit](docs/cloudflare-free.md).
+ResolveHQ can run on Cloudflare's Free plan for small deployments, provided usage stays within the current limits for Workers, D1, R2, Queues, Cron Triggers, and Email Routing. **Sign-in is the heaviest CPU path**: Workers Free allows 10 ms of CPU per request, and password hashing is the one operation that comes close to it, with MIME parsing next. Measure your own deployment before putting it in front of users, and move to Workers Paid if sign-in runs over. Queues are available on Workers Free. R2 requires account activation and billing setup separately. Resend handles outbound email under its own limits. See the [Free-plan audit](docs/cloudflare-free.md).
 
 ## Deploy
 
@@ -69,18 +69,21 @@ The easiest way to get started is with the **Deploy to Cloudflare** button above
 - A domain on Cloudflare, so you can set up Email Routing.
 - Optionally, a Resend account with a verified sending domain, to send outgoing mail.
 
-**The button provisions an empty database; it does not create the schema.** Run the migrations once
-against the repository the button created on your account, otherwise signing up fails with
-`database_not_migrated`:
+Check the deployment before signing up. `GET /api/ready` answers without a session:
+
+```bash
+curl https://<your-worker>/api/ready   # {"ok":true,"database":"ready"}
+```
+
+If it reports `"database":"unmigrated"`, apply the migrations once and re-check:
 
 ```bash
 npx wrangler login          # if this machine is not already authenticated
 npm run db:migrate:remote   # wrangler d1 migrations apply DB --remote
-curl https://<your-worker>/api/ready   # {"ok":true,"database":"ready"}
 ```
 
 Setting the Worker's **Deploy command** to `npm run deploy` in the Cloudflare dashboard makes every
-later deploy migrate first. See the [deployment guide](docs/deployment.md#apply-the-migrations--required-once).
+later deploy migrate first. See the [deployment guide](docs/deployment.md#if-the-schema-is-missing).
 
 After that, open your ResolveHQ URL and sign up as the owner, giving an optional support email that becomes your default inbox. In the Cloudflare dashboard, add an Email Routing rule sending that address to the deployed Worker, then send a test email to confirm it arrives in the inbox.
 

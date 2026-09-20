@@ -7,7 +7,7 @@ Audited September 6, 2026. ResolveHQ can run on Cloudflare's Free plan for small
 | Component      | Free-plan compatible                   | Issue                                                                                                    | Change made                                                                                                                                       |
 | -------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Workers        | Yes, within quotas                     | Older declared Wrangler floor and fresh-account migrations before resource creation                      | Require Wrangler 4.127.1; offline deployment check; document D1 creation first; preserve paid settings                                            |
-| CPU            | Conditional; benchmark required        | Password derivation, MIME parsing, sanitization and full-text documents can exceed Free execution limits | Keep strong native PBKDF2; safe opt-in timings; single-job consumers and bounded maintenance; no security downgrade                               |
+| CPU            | Conditional; measure sign-in           | Workers Free allows 10 ms of CPU per request. Password derivation is the closest call, with MIME parsing, sanitization and full-text documents behind it | PBKDF2 pinned to the runtime's 100,000 ceiling; measure sign-in CPU per deployment and move to Paid if it runs over; safe opt-in timings; bounded maintenance; no security downgrade |
 | D1             | Yes, within query/storage/row quotas   | Bulk/team N+1 reads, customer-wide counts, unbounded maintenance and FTS identifier scans                | Set-based bulk/team operations; page customers before counts; small cleanup batches; indexed FTS row mapping and cursor indexes                   |
 | R2             | Yes, within its own free allowance     | Full-buffer browser uploads, readback checksums, duplicate upload intents, cleanup races                 | Backpressured uploads with incremental checksum, durable reservations and cleanup claims; authenticated streamed downloads preserved              |
 | Queues         | Yes                                    | Documentation wrongly required Paid; repeated Cron and queue retries; batches of five mail jobs          | Keep existing queues; single-job batches, D1 dispatch reservations/leases, six automatic attempts, DLQs and admin recovery; add maintenance queue |
@@ -28,7 +28,21 @@ Audited September 6, 2026. ResolveHQ can run on Cloudflare's Free plan for small
 
 ## Authentication findings and measurement
 
-The previous implementation already used Web Crypto `importKey`/`deriveBits`, not JavaScript PBKDF2 loops or Node crypto. It derives 256 bits using PBKDF2-SHA256 at 310,000 iterations, a 16-byte random salt, and `password + NUL + SESSION_PEPPER`. The persisted format remains `pbkdf2-sha256$iterations$salt$digest`. Existing hashes, including the seeded legacy fixture, remain compatible. No migration or lower work factor was introduced.
+Password hashing uses Web Crypto `importKey`/`deriveBits`, not JavaScript PBKDF2 loops or Node
+crypto. It derives 256 bits using PBKDF2-SHA256 at **100,000 iterations**, a 16-byte random salt,
+and `password + NUL + SESSION_PEPPER`. The persisted format is `pbkdf2-sha256$iterations$salt$digest`.
+
+100,000 is not a tuning choice. The Workers runtime refuses anything above it outright:
+
+```
+Pbkdf2 failed: iteration counts above 100000 are not supported (requested 310000)
+```
+
+This is a hard ceiling in the runtime's WebCrypto, not a CPU budget, so no plan raises it. The
+project shipped 310,000 until 0.3.2 because local workerd does not enforce the cap, so every test
+and every local run passed while sign-in failed on every real deployment. A hash carrying more than
+100,000 iterations cannot be verified on Workers at all; `verifyPassword` refuses it before
+derivation rather than crashing, which means such an account needs a password reset.
 
 The change validates malformed encodings before derivation and uses Workers' native `crypto.subtle.timingSafeEqual` for digest comparison. The KDF remains the likely dominant cost; changing the comparison is not a material KDF speedup. Password change performs both verification and hashing. A missing or shorter-than-32-character pepper fails authentication closed. Never rotate an existing pepper without a separate credential migration plan.
 
@@ -36,7 +50,13 @@ Run `npm run auth:benchmark` for synthetic local Miniflare timings. On the audit
 
 `AUTH_TIMING_SAMPLE_RATE=0` disables application timing by default. Temporarily set `0.01` in Worker variables to sample approximately 1% of auth requests, or `1` for a short controlled benchmark. Both `/api/auth` and `/api/v1/auth` emit one anonymous `auth_timing` record containing only a fixed operation name, status, operation elapsed durations, total elapsed duration, and `clock: elapsed_not_cpu`. Passwords, hashes, tokens, email addresses, and full URLs are excluded. Automatic invocation logs are disabled because URLs may carry upload/reset tokens. Safe application error events remain available.
 
-Workers' [performance timers](https://developers.cloudflare.com/workers/runtime-apis/performance/) advance around I/O and do not measure CPU work. Use [Workers CPU metrics](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/) and CPU-limit/error outcomes during a controlled production test of signup, successful/failed login, reset, and change-password. A terminated invocation may never emit its final timing record. If CPU does not fit Free, upgrade Workers; do not lower iterations or replace PBKDF2 with a fast digest.
+Workers' [performance timers](https://developers.cloudflare.com/workers/runtime-apis/performance/) advance around I/O and do not measure CPU work. Use [Workers CPU metrics](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/) and CPU-limit/error outcomes during a controlled production test of signup, successful/failed login, reset, and change-password. A terminated invocation may never emit its final timing record. Sign-in is the request to watch on Workers Free, which allows 10 ms of CPU. Whether PBKDF2 at the
+runtime's 100,000-iteration ceiling fits that budget has not been established here; one Free-plan
+deployment reported success after the 0.3.2 fix, which is a data point rather than a guarantee.
+Measure it on your own deployment and move to Workers Paid if it runs over. Do not buy the
+difference back by lowering iterations or swapping PBKDF2 for a fast digest: the work factor is
+already pinned to the platform maximum, and anything that comfortably fits 10 ms is not password
+hashing.
 
 ## Recovery and storage behavior
 

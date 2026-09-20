@@ -15,6 +15,10 @@ export default tseslint.config(
       // Read-only study clones of other projects. ESLint 10 otherwise walks in
       // and loads their own nested configs, which reference packages we do not install.
       "docs/improvement-ideas-from-others/**",
+      // Agent skills installed by the skills CLI. Their ships-as-CommonJS validators
+      // are not our code and are not built by our tsconfig.
+      ".agents/**",
+      ".claude/**",
     ],
   },
   eslint.configs.recommended,

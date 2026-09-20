@@ -1,7 +1,19 @@
 import { base64Url, fromBase64Url } from "resolve-server/lib/crypto";
 
 const encoder = new TextEncoder();
-export const passwordIterations = 310_000;
+/**
+ * The Workers runtime refuses PBKDF2 above 100,000 iterations outright:
+ * `Pbkdf2 failed: iteration counts above 100000 are not supported`. It is a hard
+ * ceiling in the runtime's WebCrypto, not a CPU budget, so no plan raises it. Local
+ * workerd does not enforce it, which is why 310,000 passed every test and every local
+ * run while making sign-in impossible on every real deployment (#9).
+ *
+ * The floor and the ceiling are therefore the same number today. Raise both together if
+ * the runtime ever lifts the cap; never lower the floor to fit a CPU budget.
+ */
+export const passwordIterations = 100_000;
+export const minIterations = 100_000;
+export const maxIterations = 100_000;
 const algorithm = "pbkdf2-sha256";
 export type AuthTiming = { operation: "hash" | "verify"; elapsedMs: number };
 
@@ -41,8 +53,11 @@ export async function verifyPassword(
       storedAlgorithm !== algorithm ||
       !/^\d+$/.test(storedIterations) ||
       !Number.isSafeInteger(rounds) ||
-      rounds < 100_000 ||
-      rounds > 0xffffffff ||
+      rounds < minIterations ||
+      // A hash written before the ceiling was known cannot be verified here at all:
+      // deriving it would throw. Refusing it reads as a wrong password, which is the
+      // safe direction; the account needs a password reset.
+      rounds > maxIterations ||
       !/^[A-Za-z0-9_-]+$/.test(salt ?? "") ||
       !/^[A-Za-z0-9_-]{43}$/.test(expected ?? "")
     )

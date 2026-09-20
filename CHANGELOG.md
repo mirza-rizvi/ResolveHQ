@@ -4,6 +4,16 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+- **Sign-up and sign-in failed on every deployed Worker** ([#9](https://github.com/mirza-rizvi/ResolveHQ/issues/9)). Password hashing asked for 310,000 PBKDF2 iterations; the Workers runtime refuses anything above 100,000 and answers `Pbkdf2 failed: iteration counts above 100000 are not supported`. It is a hard ceiling in the runtime, not a CPU budget, so no plan avoided it. Local workerd does not enforce the cap, which is why every test and every local run passed while no deployment could ever create its first account. Derivation now runs at 100,000, the platform maximum.
+- The demo seed carried password hashes at 310,000 iterations, so the documented demo login would have failed on a deployment for the same reason. Both seeded accounts are regenerated at 100,000; the password is unchanged.
+- A stored hash above the runtime ceiling can never be verified on Workers. `verifyPassword` now refuses it before derivation instead of throwing, so such an account reads as a wrong password and needs a reset rather than returning a 500.
+- The 0.3.1 notes said the Deploy to Cloudflare button does not create the database schema. That was wrong: it was inferred from a local reproduction rather than from the reported deployment, where the tables were already present. The guide now treats a missing schema as a condition to check with `/api/ready` rather than as something the button always causes.
+
+### Changed
+- The README, the deployment guide and the Free-plan audit now name sign-in as the heaviest CPU path and tell you to measure it, since Workers Free allows 10 ms per request. The audit previously said to upgrade the plan rather than lower iterations, advice written for a CPU constraint that turned out not to be the binding one; the binding one was the runtime's iteration ceiling, which no plan changes. Whether PBKDF2 at 100,000 fits the Free budget is left as a thing to measure rather than asserted either way.
+
+
 ## [0.3.1] - 2026-09-20
 
 ### Fixed

@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import app from "../src/server/app";
-import { hashPassword, verifyPassword, type AuthTiming } from "../src/server/auth/password";
+import {
+  hashPassword,
+  maxIterations,
+  minIterations,
+  passwordIterations,
+  verifyPassword,
+  type AuthTiming,
+} from "../src/server/auth/password";
 import { dispatchMail, leaseMs, retryDelay } from "../src/server/mail/reliability";
 import { processOutboundMail, processInboundMail } from "../src/server/mail/queue";
 import { discoverCleanup, processMaintenance, requestCustomerRefresh } from "../src/server/maintenance/service";
@@ -35,13 +42,16 @@ describe("Free-plan reliability", () => {
   it("rejects malformed hashes before expensive derivation and keeps timing records anonymous", async () => {
     const timings: AuthTiming[] = [];
     const hash = await hashPassword("synthetic password", env.SESSION_PEPPER, timings);
-    expect(hash.startsWith("pbkdf2-sha256$310000$")).toBe(true);
+    expect(hash.startsWith("pbkdf2-sha256$100000$")).toBe(true);
     expect(await verifyPassword("synthetic password", hash, env.SESSION_PEPPER, timings)).toBe(true);
     for (const invalid of [
       "",
       hash + "$extra",
-      hash.replace("310000", "99999"),
-      hash.replace("310000", "NaN"),
+      hash.replace("100000", "99999"),
+      hash.replace("100000", "NaN"),
+      // Above the runtime ceiling: deriving this would throw, so it must be
+      // refused before derivation rather than crashing the request.
+      hash.replace("100000", "310000"),
       hash.slice(0, -1),
     ]) {
       expect(await verifyPassword("synthetic password", invalid, env.SESSION_PEPPER)).toBe(false);
@@ -49,6 +59,20 @@ describe("Free-plan reliability", () => {
     expect(timings.map((row) => row.operation)).toEqual(["hash", "verify"]);
     expect(Object.keys(timings[0]).sort()).toEqual(["elapsedMs", "operation"]);
     expect(await verifyPassword("synthetic password", hash, "different pepper")).toBe(false);
+  });
+
+  it("keeps password derivation inside the runtime's PBKDF2 ceiling", async () => {
+    // Deployed workerd refuses anything above 100,000 outright:
+    // "Pbkdf2 failed: iteration counts above 100000 are not supported". Local workerd
+    // does not enforce it, so this assertion is the only thing standing between a raised
+    // work factor and sign-in breaking on every real deployment (#9).
+    expect(passwordIterations).toBeLessThanOrEqual(100_000);
+    expect(passwordIterations).toBe(minIterations);
+    expect(maxIterations).toBe(100_000);
+
+    // The seeded demo accounts have to be derivable on a deployment too.
+    const seeded = "pbkdf2-sha256$100000$5YVp6WPqIjWJg4XXdTp-hg$9NzGpepQAsyPuGw8yD2hvw5mxDNzxjvypPlG-APViaI";
+    expect(Number(seeded.split("$")[1])).toBeLessThanOrEqual(100_000);
   });
 
   it("samples both auth route prefixes without logging input or URL fragments", async () => {

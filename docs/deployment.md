@@ -16,16 +16,38 @@ The deployment flow reads `wrangler.jsonc` and provisions everything ResolveHQ n
 
 The flow reads the active entries in `.dev.vars.example`: supply a unique `SESSION_PEPPER` (at least 32 random characters) and keep `DEV_MAIL_MODE=disabled`. Configure optional `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `SYSTEM_MAIL_FROM`, and `APP_URL` afterward in Worker secrets/settings; commented example entries are not configuration.
 
-### Apply the migrations — required, once
+### Sign-in and the CPU budget
 
-**The button does not create the database schema.** It provisions an empty D1 and hands the build
-to [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), whose deploy command
-defaults to a plain `wrangler deploy`. `npm run deploy` in this repository does chain the migration
-step, but nothing calls that script for you. Until the migrations are applied, every request that
-touches a table fails and the app answers:
+Workers Free allows **10 ms of CPU per request**, and password hashing is the heaviest thing
+ResolveHQ does in a request. Whether it fits has not been measured across accounts and hardware, so
+treat it as the number to watch: check CPU time for a sign-in under your Worker's **Metrics**, and
+move to Workers Paid if it runs over. An invocation that exceeds the limit is terminated and
+reported as `exceededCpu`.
+
+This is separate from the runtime's PBKDF2 ceiling. The runtime refuses more than 100,000 iterations
+outright, with `Pbkdf2 failed: iteration counts above 100000 are not supported`; ResolveHQ derives at
+exactly 100,000 since 0.3.2. **No plan raises that ceiling**, so upgrading is never the answer to
+that particular error.
+
+100,000 is the platform maximum, not a freely chosen work factor, and it sits below current OWASP
+guidance for PBKDF2-SHA256. A 32-character-minimum `SESSION_PEPPER` mixed into every derivation and
+rate-limited auth routes are what compensate. Do not lower it further.
+
+### If the schema is missing
+
+The deploy flow provisions the D1 database and normally applies the migrations with it. If it did
+not, every request that touches a table fails and the app answers:
 
 ```json
 { "error": { "code": "database_not_migrated", "message": "The database schema is missing. Apply the migrations, then retry: npx wrangler d1 migrations apply DB --remote" } }
+```
+
+`GET /api/ready` answers the same question without a session, and needs no sign-in:
+
+```bash
+curl https://<your-worker>/api/ready
+# {"ok":true,"database":"ready"}          ready to use
+# {"ok":false,"database":"unmigrated"}    schema missing, with the count and the command
 ```
 
 Fix it once, from a local checkout of the repository the button created on your account:
@@ -37,15 +59,6 @@ npm run db:migrate:remote   # wrangler d1 migrations apply DB --remote
 
 `DB` there is the binding name from `wrangler.jsonc`, which Wrangler resolves to the `resolvehq`
 database; the npm script spells the whole command out if you would rather run it directly.
-
-Then confirm, which answers without signing in:
-
-```bash
-curl https://<your-worker>/api/ready
-# {"ok":true,"database":"ready"}
-```
-
-A `503` with `"database":"unmigrated"` names how many tables are missing and repeats the command.
 
 To stop this recurring on every future deploy, open the Worker in the Cloudflare dashboard and set
 **Settings → Build → Deploy command** to `npm run deploy`. Workers Builds then applies migrations
