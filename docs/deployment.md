@@ -28,11 +28,15 @@ touches a table fails and the app answers:
 { "error": { "code": "database_not_migrated", "message": "The database schema is missing. Apply the migrations, then retry: npx wrangler d1 migrations apply DB --remote" } }
 ```
 
-Fix it once, from a checkout of the repository the button created on your account:
+Fix it once, from a local checkout of the repository the button created on your account:
 
 ```bash
-npx wrangler d1 migrations apply DB --remote
+npx wrangler login          # if this machine is not already authenticated
+npm run db:migrate:remote   # wrangler d1 migrations apply DB --remote
 ```
+
+`DB` there is the binding name from `wrangler.jsonc`, which Wrangler resolves to the `resolvehq`
+database; the npm script spells the whole command out if you would rather run it directly.
 
 Then confirm, which answers without signing in:
 

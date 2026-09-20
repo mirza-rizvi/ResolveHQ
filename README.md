@@ -74,7 +74,8 @@ against the repository the button created on your account, otherwise signing up 
 `database_not_migrated`:
 
 ```bash
-npx wrangler d1 migrations apply DB --remote
+npx wrangler login          # if this machine is not already authenticated
+npm run db:migrate:remote   # wrangler d1 migrations apply DB --remote
 curl https://<your-worker>/api/ready   # {"ok":true,"database":"ready"}
 ```
 
