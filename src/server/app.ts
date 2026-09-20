@@ -77,7 +77,10 @@ app.get("/api/ready", async (context) => {
       {
         ok: false,
         database: "unmigrated",
-        missingTables: missing.slice(0, 5),
+        // A count, never the names. This endpoint is deliberately unauthenticated so an
+        // operator can check a deployment before signing in, and the schema of a product
+        // is not something an anonymous caller needs enumerated back to them.
+        missingTables: missing.length,
         detail: `The database is missing ${missing.length} table(s). Apply the migrations: ${MIGRATE_COMMAND}`,
       },
       503,

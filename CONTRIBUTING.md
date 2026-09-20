@@ -15,7 +15,7 @@ The app and API run on `http://localhost:5173`. Sign in as `owner@northstarlabs.
 
 ## Before you open a pull request
 
-- `npm run typecheck`, `npm run lint`, `npm test` all pass.
+- `npm run typecheck`, `npm run lint`, `npm test` all pass. CI also runs `npm run test:web` and the Playwright suite, so run `npm run test:e2e` locally for anything touching the app shell, inbox, or settings.
 - UI changes include a screenshot; changes to the inbox, thread, or settings pages should also refresh `docs/images` with `npm run screenshots`.
 - Database changes ship as a hand-written SQL file in `drizzle/migrations/` plus a `meta/_journal.json` entry, with the docs that describe them.
 - Mail, auth, tenant-isolation, and attachment changes come with regression tests in `tests/`.

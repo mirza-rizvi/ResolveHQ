@@ -85,6 +85,14 @@ npm run db:migrate:remote   # wrangler d1 migrations apply DB --remote
 Setting the Worker's **Deploy command** to `npm run deploy` in the Cloudflare dashboard makes every
 later deploy migrate first. See the [deployment guide](docs/deployment.md#if-the-schema-is-missing).
 
+To check a deployment end to end, including the parts that only fail on real Cloudflare
+infrastructure:
+
+```bash
+npm run smoke -- https://<your-worker>            # read-only checks
+npm run smoke -- https://<your-worker> --signup   # also creates one throwaway workspace
+```
+
 After that, open your ResolveHQ URL and sign up as the owner, giving an optional support email that becomes your default inbox. In the Cloudflare dashboard, add an Email Routing rule sending that address to the deployed Worker, then send a test email to confirm it arrives in the inbox.
 
 See the [deployment guide](docs/deployment.md) for what the deploy flow provisions, required configuration, first-run setup, and manual deployment.

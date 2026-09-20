@@ -4,6 +4,14 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+- `npm run smoke -- <url>` smoke-tests a deployed Worker: that it responds, that its database has a schema, and that the app shell is served. With `--signup` it also creates one throwaway workspace and signs in with it, which is the only check that exercises password hashing on real infrastructure. Every other gate in the project runs against local `workerd`, which does not enforce some limits the production runtime does; that gap shipped both the 310,000-iteration PBKDF2 failure and an unmigrated database.
+- CI now runs the Playwright suite as its own job, on a browser it installs itself, and uploads the report when it fails. The browser tests previously ran only on a developer's machine, which is how a broken screenshot spec went unnoticed for days.
+
+### Fixed
+- `/api/ready` no longer returns the names of missing tables to unauthenticated callers. The endpoint stays unauthenticated on purpose, so an operator can check a deployment before signing in, but it now reports only how many tables are missing.
+
+
 ## [0.3.2] - 2026-09-20
 
 ### Fixed

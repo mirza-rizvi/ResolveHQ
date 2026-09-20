@@ -16,6 +16,23 @@ The deployment flow reads `wrangler.jsonc` and provisions everything ResolveHQ n
 
 The flow reads the active entries in `.dev.vars.example`: supply a unique `SESSION_PEPPER` (at least 32 random characters) and keep `DEV_MAIL_MODE=disabled`. Configure optional `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `SYSTEM_MAIL_FROM`, and `APP_URL` afterward in Worker secrets/settings; commented example entries are not configuration.
 
+### Smoke-testing a deployment
+
+Every automated gate in this repository runs against local `workerd`, which does not enforce some
+limits the production runtime does. That gap has shipped two bugs: password derivation at 310,000
+PBKDF2 iterations, which the runtime refuses above 100,000, and a database whose migrations were
+never applied. Both passed every local test and broke every deployment.
+
+```bash
+npm run smoke -- https://<your-worker>            # worker responds, schema present, app shell served
+npm run smoke -- https://<your-worker> --signup   # also exercises password hashing end to end
+```
+
+`--signup` creates one throwaway workspace, because signing up is the only request that derives a
+password hash; a deployment can pass every read-only check and still be unable to create an account.
+The script prints the `wrangler d1 execute` command that removes the workspace again. Run it after
+the first deploy of a new environment and after any change to authentication.
+
 ### Sign-in and the CPU budget
 
 Workers Free allows **10 ms of CPU per request**, and password hashing is the heaviest thing
@@ -424,6 +441,7 @@ npm run db:migrate:remote # Apply migrations to remote D1
 npm run db:seed:local     # Load realistic local demo data
 npm run db:reset:local    # Wipe local D1, migrate, and reseed (used by test:e2e)
 npm run cloudflare:check  # Offline configuration checks and limitations
+npm run smoke -- <url>    # Smoke-test a real deployment (add --signup to test auth)
 npm run auth:benchmark    # Synthetic local elapsed-time benchmark; not production CPU
 npm run deploy           # Check, build, apply remote D1 migrations, deploy
 ```

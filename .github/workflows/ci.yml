@@ -43,3 +43,38 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # The browser suite is the only gate that drives the real app end to end. It runs as a
+  # separate job so a Playwright failure is legible on its own, and because installing a
+  # browser costs more than the rest of the pipeline put together.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Resets the local D1, seeds the demo workspace, and starts the dev server itself
+      # through playwright.config.ts. No Cloudflare credentials are involved.
+      - name: Browser tests
+        run: npm run test:e2e
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

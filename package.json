@@ -50,6 +50,7 @@
     "db:seed:local": "wrangler d1 execute DB --local --file=drizzle/seed.sql",
     "db:reset:local": "bash scripts/db-reset-local.sh",
     "cloudflare:check": "node scripts/cloudflare-check.mjs",
+    "smoke": "node scripts/smoke.mjs",
     "auth:benchmark": "node scripts/auth-benchmark.mjs"
   },
   "dependencies": {
