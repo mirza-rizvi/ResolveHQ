@@ -4,6 +4,8 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-22
+
 ### Changed
 - The CPU guidance now carries a real measurement instead of an inference. A Free-plan operator measured a signup at 29 ms of CPU against the plan's 10 ms budget, and saw several other paths over 10 ms on a workspace with almost no data; it works because Cloudflare tolerates infrequent overage, not because it fits. The README, the deployment guide and the Free-plan audit say that, and say to plan on Workers Paid before real volume arrives rather than after. Thanks to the reporter in [#9](https://github.com/mirza-rizvi/ResolveHQ/issues/9) for the number, which is the only CPU measurement this project has ever had from real infrastructure.
 
