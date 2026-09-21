@@ -59,7 +59,7 @@ ResolveHQ runs as a single Cloudflare Worker in your own account. Hono serves bo
 
 ## How much does it cost?
 
-ResolveHQ can run on Cloudflare's Free plan for small deployments, provided usage stays within the current limits for Workers, D1, R2, Queues, Cron Triggers, and Email Routing. **Sign-in is the heaviest CPU path**: Workers Free allows 10 ms of CPU per request, and password hashing is the one operation that comes close to it, with MIME parsing next. Measure your own deployment before putting it in front of users, and move to Workers Paid if sign-in runs over. Queues are available on Workers Free. R2 requires account activation and billing setup separately. Resend handles outbound email under its own limits. See the [Free-plan audit](docs/cloudflare-free.md).
+ResolveHQ can run on Cloudflare's Free plan for getting started and light use, provided usage stays within the current limits for Workers, D1, R2, Queues, Cron Triggers, and Email Routing. **Expect to outgrow Free.** Workers Free allows 10 ms of CPU per request; a signup on one Free deployment measured 29 ms, and several other paths also ran over 10 ms on an empty workspace. Cloudflare tolerates a Worker that exceeds the limit infrequently, which is why that deployment works, but the margin shrinks as tickets, customers and notifications accumulate. Measure CPU time under your Worker's Metrics and move to Workers Paid before the queue gets busy. Queues are available on Workers Free. R2 requires account activation and billing setup separately. Resend handles outbound email under its own limits. See the [Free-plan audit](docs/cloudflare-free.md).
 
 ## Deploy
 

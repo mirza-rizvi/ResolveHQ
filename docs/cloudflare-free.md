@@ -7,7 +7,7 @@ Audited September 6, 2026. ResolveHQ can run on Cloudflare's Free plan for small
 | Component      | Free-plan compatible                   | Issue                                                                                                    | Change made                                                                                                                                       |
 | -------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Workers        | Yes, within quotas                     | Older declared Wrangler floor and fresh-account migrations before resource creation                      | Require Wrangler 4.127.1; offline deployment check; document D1 creation first; preserve paid settings                                            |
-| CPU            | Conditional; measure sign-in           | Workers Free allows 10 ms of CPU per request. Password derivation is the closest call, with MIME parsing, sanitization and full-text documents behind it | PBKDF2 pinned to the runtime's 100,000 ceiling; measure sign-in CPU per deployment and move to Paid if it runs over; safe opt-in timings; bounded maintenance; no security downgrade |
+| CPU            | Over budget, tolerated for now         | Workers Free allows 10 ms per request. A measured signup costs ~29 ms, and other paths exceed 10 ms on an empty workspace; the ticket list query is expected to be the first hard wall | PBKDF2 pinned to the runtime's 100,000 ceiling; isolate flexibility absorbs infrequent overage today; plan on Workers Paid before real volume; safe opt-in timings; bounded maintenance; no security downgrade |
 | D1             | Yes, within query/storage/row quotas   | Bulk/team N+1 reads, customer-wide counts, unbounded maintenance and FTS identifier scans                | Set-based bulk/team operations; page customers before counts; small cleanup batches; indexed FTS row mapping and cursor indexes                   |
 | R2             | Yes, within its own free allowance     | Full-buffer browser uploads, readback checksums, duplicate upload intents, cleanup races                 | Backpressured uploads with incremental checksum, durable reservations and cleanup claims; authenticated streamed downloads preserved              |
 | Queues         | Yes                                    | Documentation wrongly required Paid; repeated Cron and queue retries; batches of five mail jobs          | Keep existing queues; single-job batches, D1 dispatch reservations/leases, six automatic attempts, DLQs and admin recovery; add maintenance queue |
@@ -50,13 +50,20 @@ Run `npm run auth:benchmark` for synthetic local Miniflare timings. On the audit
 
 `AUTH_TIMING_SAMPLE_RATE=0` disables application timing by default. Temporarily set `0.01` in Worker variables to sample approximately 1% of auth requests, or `1` for a short controlled benchmark. Both `/api/auth` and `/api/v1/auth` emit one anonymous `auth_timing` record containing only a fixed operation name, status, operation elapsed durations, total elapsed duration, and `clock: elapsed_not_cpu`. Passwords, hashes, tokens, email addresses, and full URLs are excluded. Automatic invocation logs are disabled because URLs may carry upload/reset tokens. Safe application error events remain available.
 
-Workers' [performance timers](https://developers.cloudflare.com/workers/runtime-apis/performance/) advance around I/O and do not measure CPU work. Use [Workers CPU metrics](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/) and CPU-limit/error outcomes during a controlled production test of signup, successful/failed login, reset, and change-password. A terminated invocation may never emit its final timing record. Sign-in is the request to watch on Workers Free, which allows 10 ms of CPU. Whether PBKDF2 at the
-runtime's 100,000-iteration ceiling fits that budget has not been established here; one Free-plan
-deployment reported success after the 0.3.2 fix, which is a data point rather than a guarantee.
-Measure it on your own deployment and move to Workers Paid if it runs over. Do not buy the
-difference back by lowering iterations or swapping PBKDF2 for a fast digest: the work factor is
-already pinned to the platform maximum, and anything that comfortably fits 10 ms is not password
-hashing.
+Workers' [performance timers](https://developers.cloudflare.com/workers/runtime-apis/performance/) advance around I/O and do not measure CPU work. Use [Workers CPU metrics](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/) and CPU-limit/error outcomes during a controlled production test of signup, successful/failed login, reset, and change-password. A terminated invocation may never emit its final timing record. Workers Free allows 10 ms of CPU per request. The first real measurement of a ResolveHQ deployment,
+contributed by a Free-plan operator in [#9](https://github.com/mirza-rizvi/ResolveHQ/issues/9), puts
+a signup at **29 ms of CPU** — roughly three times the budget — with several other paths also over
+10 ms on a workspace holding almost no data. It works because Cloudflare tolerates a Worker that
+exceeds the limit infrequently, not because it fits.
+
+Two consequences. First, Free is a starting point rather than a destination: the same operator
+expects the ticket list query to be what forces the upgrade, and that is the app's hot path, so the
+margin narrows exactly as a workspace becomes useful. Second, do not try to buy the difference back
+by lowering iterations or swapping PBKDF2 for a fast digest. The work factor is already pinned to
+the platform maximum, and anything that comfortably fits 10 ms is not password hashing.
+
+This project has never profiled CPU on real infrastructure; that 29 ms is the only measurement it
+has. Treat every other CPU claim here as inference until someone measures it.
 
 ## Recovery and storage behavior
 

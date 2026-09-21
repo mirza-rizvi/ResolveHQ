@@ -35,11 +35,17 @@ the first deploy of a new environment and after any change to authentication.
 
 ### Sign-in and the CPU budget
 
-Workers Free allows **10 ms of CPU per request**, and password hashing is the heaviest thing
-ResolveHQ does in a request. Whether it fits has not been measured across accounts and hardware, so
-treat it as the number to watch: check CPU time for a sign-in under your Worker's **Metrics**, and
-move to Workers Paid if it runs over. An invocation that exceeds the limit is terminated and
-reported as `exceededCpu`.
+Workers Free allows **10 ms of CPU per request**. One Free-plan deployment measured a signup at
+**29 ms of CPU**, and reported that several other paths also ran over 10 ms on a workspace with
+almost no data in it. That deployment works: Cloudflare gives each isolate
+[some flexibility](https://developers.cloudflare.com/workers/platform/limits/#cpu-time) for a Worker
+that infrequently exceeds its limit. Treat it as headroom you are borrowing, not as capacity you
+have. As tickets, customers and notifications accumulate — the ticket list query first — that margin
+disappears, and an invocation that exceeds the limit consistently is terminated and reported as
+`exceededCpu`.
+
+Check CPU time per request under your Worker's **Metrics** and plan on Workers Paid before real
+volume arrives. A single measurement from one account is a data point, not a guarantee for yours.
 
 This is separate from the runtime's PBKDF2 ceiling. The runtime refuses more than 100,000 iterations
 outright, with `Pbkdf2 failed: iteration counts above 100000 are not supported`; ResolveHQ derives at
