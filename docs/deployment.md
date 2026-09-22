@@ -70,8 +70,14 @@ not, every request that touches a table fails and the app answers:
 ```bash
 curl https://<your-worker>/api/ready
 # {"ok":true,"database":"ready"}          ready to use
-# {"ok":false,"database":"unmigrated"}    schema missing, with the count and the command
+# {"ok":false,"database":"unmigrated"}    schema missing or migrations unapplied
 ```
+
+It answers `unmigrated` in two cases: tables the running code expects are absent, or the
+`d1_migrations` record shows migrations this build ships that the database never applied.
+The second matters after an upgrade, where every table can already exist and a migration
+that only adds a column or an index is still missing. Either way the response carries a
+count and the command, never the schema itself.
 
 Fix it once, from a local checkout of the repository the button created on your account:
 

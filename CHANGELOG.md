@@ -4,6 +4,10 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+- The deployment health check notices a half-applied migration chain. It compared the tables the running code expects against the ones that exist, which cannot see a migration that only adds a column, an index or a constraint; it now also compares what this build ships against what `d1_migrations` records as applied. `/api/ready` and Settings → Setup & health both report it, with a count and the command, never the schema itself.
+
+
 ## [0.3.3] - 2026-09-22
 
 ### Changed

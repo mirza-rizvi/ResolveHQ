@@ -5,7 +5,7 @@ import type { HonoEnv } from "./types";
 import { authRoutes } from "./auth/routes";
 import { organizationRoutes } from "./organizations/routes";
 import { HttpError } from "./http/errors";
-import { isMissingSchemaError, missingTables, MIGRATE_COMMAND } from "./db/health";
+import { isMissingSchemaError, missingTables, pendingMigrations, MIGRATE_COMMAND } from "./db/health";
 import { requireApiKey } from "./auth/api-key";
 import { mcpRoutes } from "./mcp/routes";
 import { customerRoutes } from "./customers/routes";
@@ -82,6 +82,20 @@ app.get("/api/ready", async (context) => {
         // is not something an anonymous caller needs enumerated back to them.
         missingTables: missing.length,
         detail: `The database is missing ${missing.length} table(s). Apply the migrations: ${MIGRATE_COMMAND}`,
+      },
+      503,
+    );
+
+  // Every table can exist while the chain is still half applied: a migration that only
+  // adds a column or an index leaves the table list untouched.
+  const pending = await pendingMigrations(context.env.DB);
+  if (pending && pending.length > 0)
+    return context.json(
+      {
+        ok: false,
+        database: "unmigrated",
+        pendingMigrations: pending.length,
+        detail: `This Worker expects ${pending.length} migration(s) the database has not applied. Apply them: ${MIGRATE_COMMAND}`,
       },
       503,
     );

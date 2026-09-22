@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { createDb } from "../db";
-import { missingTables, MIGRATE_COMMAND } from "../db/health";
+import { expectedMigrations, missingTables, pendingMigrations, MIGRATE_COMMAND } from "../db/health";
 import { inboxes, organizations, settings } from "../db/schema";
 import type { AppBindings } from "../types";
 
@@ -250,6 +250,10 @@ function mailProviderOf(env: AppBindings): MailProvider {
  * Catches the half-upgraded deployment: new Worker code, old database. Signing in only
  * proves the tables the session path touches exist, so this compares the whole schema.
  */
+function expectedCount() {
+  return expectedMigrations().length;
+}
+
 async function checkDatabaseSchema(env: AppBindings): Promise<ReadinessCheck> {
   const id = "config.database_schema";
   const label = "Database schema";
@@ -267,16 +271,30 @@ async function checkDatabaseSchema(env: AppBindings): Promise<ReadinessCheck> {
       observed: "Found: no response from D1",
     };
   }
-  if (missing.length === 0)
+  if (missing.length === 0) {
+    // A complete table list does not prove a complete chain: a migration that adds a
+    // column or an index changes nothing this check would otherwise see.
+    const pending = await pendingMigrations(env.DB);
+    if (pending && pending.length > 0)
+      return {
+        id,
+        group: "configuration",
+        label,
+        advisory: false,
+        status: "failed",
+        detail: `This deployment expects migrations the database has not applied. Apply them, then re-check: ${MIGRATE_COMMAND}`,
+        observed: `Found: ${pending.length} unapplied migration(s) — ${pending.slice(0, 3).join(", ")}${pending.length > 3 ? "…" : ""}`,
+      };
     return {
       id,
       group: "configuration",
       label,
       advisory: false,
       status: "ready",
-      detail: "Every table this version of ResolveHQ expects is present.",
-      observed: "Found: schema up to date",
+      detail: "Every table this version of ResolveHQ expects is present, and every migration has been applied.",
+      observed: pending ? `Found: ${expectedCount()} migrations applied` : "Found: schema up to date",
     };
+  }
   return {
     id,
     group: "configuration",

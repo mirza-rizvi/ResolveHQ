@@ -1,7 +1,14 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import app from "resolve-server/app";
-import { expectedTables, isMissingSchemaError, missingTables, MIGRATE_COMMAND } from "resolve-server/db/health";
+import {
+  expectedMigrations,
+  expectedTables,
+  isMissingSchemaError,
+  missingTables,
+  pendingMigrations,
+  MIGRATE_COMMAND,
+} from "resolve-server/db/health";
 import { evaluateReadiness } from "resolve-server/operations/readiness";
 import { request, signup } from "./helpers";
 
@@ -97,6 +104,46 @@ describe("unmigrated database", () => {
     const body = (await response.json()) as { ok: boolean; database: string };
     expect(body.ok).toBe(false);
     expect(body.database).toBe("unavailable");
+  });
+
+  it("knows which migrations this build expects", () => {
+    const migrations = expectedMigrations();
+    expect(migrations[0]).toMatch(/^0000_.*\.sql$/);
+    expect(migrations).toContain("0014_workspace_backups.sql");
+    // The journal is the source, so a new migration file without a journal entry is
+    // invisible here exactly as it would be to Wrangler.
+    expect(migrations.length).toBeGreaterThanOrEqual(15);
+  });
+
+  it("reports nothing pending against the test database", async () => {
+    expect(await pendingMigrations(env.DB)).toEqual([]);
+  });
+
+  it("notices a half-applied chain that leaves every table in place", async () => {
+    const applied = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first<{
+      name: string;
+    }>();
+    expect(applied?.name).toBeTruthy();
+
+    // A migration that only adds a column or an index changes no table name, so the
+    // table comparison cannot see it. Removing the record simulates exactly that: the
+    // schema looks complete and the chain is not.
+    await env.DB.prepare("DELETE FROM d1_migrations WHERE name = ?").bind(applied!.name).run();
+    try {
+      expect(await missingTables(env.DB)).toEqual([]);
+      expect(await pendingMigrations(env.DB)).toEqual([applied!.name]);
+
+      const response = await request("/ready");
+      expect(response.status).toBe(503);
+      const body = (await response.json()) as { database: string; pendingMigrations: number; detail: string };
+      expect(body.database).toBe("unmigrated");
+      expect(body.pendingMigrations).toBe(1);
+      expect(body.detail).toContain(MIGRATE_COMMAND);
+    } finally {
+      await env.DB.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?, CURRENT_TIMESTAMP)")
+        .bind(applied!.name)
+        .run();
+    }
   });
 
   it("reports a migrated database as ready", async () => {
