@@ -5,6 +5,7 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 ## [Unreleased]
 
 ### Fixed
+- The browser suite now allows a CI runner more time than a developer's machine. Its first run in CI timed out signing in: a cold dev server compiles route chunks lazily and the first sign-in also pays a 100,000-iteration password derivation, which together overran the 60-second budget. Failures also upload `test-results/`, without which that first failure could not be diagnosed at all.
 - Sign-in no longer takes noticeably longer for an email that has an account than for one that does not. The unknown case returned before the password derivation ran, which let anyone measure which addresses are registered; both cases now derive.
 - A workspace export sizes each page by what the previous one weighed instead of always reading 200 rows. A table of very wide rows — a message allows 100 KB of text and 200 KB of HTML — could exceed the Worker's memory, and because the cursor stays at the page that failed, every later attempt failed in the same place and the export never recovered.
 

@@ -8,8 +8,10 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   // The dev server compiles route chunks lazily, so a page visited for the first time
-  // mid-suite can take several seconds before it is interactive.
-  timeout: 60_000,
+  // mid-suite can take several seconds before it is interactive. A CI runner is slower
+  // and colder than a developer's machine: the first sign-in there pays the lazy
+  // compile and a 100,000-iteration password derivation at once, which overran 60s.
+  timeout: process.env.CI ? 150_000 : 60_000,
   use: {
     baseURL: "http://localhost:5173",
     trace: "retain-on-failure",
@@ -45,6 +47,6 @@ export default defineConfig({
     command: "npx vite --port 5173",
     url: "http://localhost:5173/api/health",
     reuseExistingServer: !process.env.CI,
-    timeout: 90_000,
+    timeout: process.env.CI ? 180_000 : 90_000,
   },
 });
