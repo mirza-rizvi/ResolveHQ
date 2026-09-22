@@ -66,6 +66,14 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      # The dev server reads .dev.vars, which is gitignored, so CI has to create it the
+      # same way CONTRIBUTING tells a developer to. Without it SESSION_PEPPER is unset,
+      # every auth route answers 503 "Authentication is not configured", and the suite
+      # fails at sign-in. The pepper here must stay the one the demo seed's password
+      # hashes were derived against.
+      - name: Configure the dev server
+        run: cp .dev.vars.local.example .dev.vars
+
       # Resets the local D1, seeds the demo workspace, and starts the dev server itself
       # through playwright.config.ts. No Cloudflare credentials are involved.
       - name: Browser tests
