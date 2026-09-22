@@ -1,3 +1,4 @@
+import { DeploymentStatus } from "@/web/components/deployment-status";
 import { useRef, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
@@ -82,6 +83,7 @@ export function AuthSurface({ children }: { children: React.ReactNode }) {
         <Link className="auth-brand" to="/">
           ResolveHQ
         </Link>
+        <DeploymentStatus />
         {children}
       </section>
       <aside className="auth-aside" aria-hidden="true">

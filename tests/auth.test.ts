@@ -22,6 +22,24 @@ describe("authentication", () => {
     );
   });
 
+  it("derives a password hash even when the account does not exist", async () => {
+    // Counting derivations rather than timing them: an unknown email used to return
+    // before verifyPassword ran, which made response time an account-enumeration
+    // oracle. Both paths must now pay the same derivation.
+    const derive = vi.spyOn(crypto.subtle, "deriveBits");
+    try {
+      derive.mockClear();
+      const missing = await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: "definitely-no-account@example.test", password: "some-password" }),
+      });
+      expect(missing.status).toBe(401);
+      expect(derive).toHaveBeenCalled();
+    } finally {
+      derive.mockRestore();
+    }
+  });
+
   it("creates an owner session and rejects mutation without CSRF", async () => {
     const session = await signup("auth");
     const me = await request("/auth/me", {}, session);

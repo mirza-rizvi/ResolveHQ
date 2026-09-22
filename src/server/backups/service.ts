@@ -90,6 +90,10 @@ const MIN_RETAIN_DAYS = 1;
 const MAX_RETAIN_DAYS = 365;
 const DAY_MS = 86_400_000;
 const AUTO_BACKUP_INTERVAL_MS = 7 * DAY_MS;
+/** What one chunk should weigh. Rows per page are derived from this, not fixed. */
+const TARGET_CHUNK_BYTES = 4 * 1024 * 1024;
+/** Never read fewer than one row, or the export cannot advance past a very wide row. */
+const MIN_CHUNK_ROWS = 1;
 /** A failed export keeps its partial chunks briefly for diagnosis, then they are reclaimed. */
 const FAILED_RETENTION_MS = DAY_MS;
 /** A running export that has not advanced for this long is treated as abandoned. */
@@ -116,6 +120,14 @@ interface BackupCursor {
   table: string;
   rowId: number;
   seq: number;
+  /**
+   * Rows to read in the next page of this table, adapted from what the last page
+   * actually weighed. A fixed count is blind to row width: `messages` allows 100 KB of
+   * text and 200 KB of HTML each, so 200 of them is tens of megabytes inside a 128 MB
+   * Worker. Worse, the cursor persists at the page that failed, so a fixed count made
+   * every later attempt fail in the same place and the export never recovered.
+   */
+  rows?: number;
 }
 
 interface BackupRow {
@@ -268,10 +280,11 @@ export async function advanceBackup(
         break;
       }
       const entry = EXPORT_TABLES[index];
+      const pageRows = Math.max(MIN_CHUNK_ROWS, Math.min(chunkRows, cursor.rows ?? chunkRows));
       const page = await env.DB.prepare(
         `SELECT rowid AS __rowid, * FROM "${entry.table}" WHERE ${scopeClause(entry.scope)} AND rowid > ? ORDER BY rowid LIMIT ?`,
       )
-        .bind(backup.organizationId, cursor.rowId, chunkRows)
+        .bind(backup.organizationId, cursor.rowId, pageRows)
         .all<Record<string, unknown>>();
       queries += 1;
       const results = page.results ?? [];
@@ -282,6 +295,7 @@ export async function advanceBackup(
           done = true;
           break;
         }
+        // Each table gets its own width estimate; messages and tags weigh nothing alike.
         cursor = { table: next.table, rowId: 0, seq: 0 };
         continue;
       }
@@ -295,9 +309,11 @@ export async function advanceBackup(
         if (kept) lines.push(JSON.stringify(kept));
       }
 
+      let pageBytes = 0;
       if (lines.length > 0) {
         const body = `${lines.join("\n")}\n`;
         const bytes = new TextEncoder().encode(body);
+        pageBytes = bytes.byteLength;
         await env.ATTACHMENTS.put(`${backup.objectPrefix}${entry.table}.${cursor.seq}.ndjson`, bytes, {
           httpMetadata: { contentType: "application/x-ndjson" },
         });
@@ -307,7 +323,11 @@ export async function advanceBackup(
       }
 
       rows += results.length;
-      cursor = { table: entry.table, rowId: lastRowId, seq: cursor.seq + 1 };
+      // Size the next page from what this one actually weighed, so a table of very wide
+      // rows narrows itself instead of failing forever at the same offset.
+      const perRow = Math.max(1, Math.ceil(pageBytes / results.length));
+      const nextRows = Math.max(MIN_CHUNK_ROWS, Math.min(chunkRows, Math.floor(TARGET_CHUNK_BYTES / perRow)));
+      cursor = { table: entry.table, rowId: lastRowId, seq: cursor.seq + 1, rows: nextRows };
     }
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : "The export failed.";

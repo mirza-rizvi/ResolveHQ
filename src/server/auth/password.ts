@@ -37,6 +37,14 @@ export async function hashPassword(password: string, pepper: string, timings?: A
   }
 }
 
+/**
+ * A well-formed hash that matches no password, used to spend the same derivation time on
+ * an unknown account as on a real one. Sign-in used to return in milliseconds when the
+ * email was unknown and in tens of milliseconds when it was not, which told an
+ * unauthenticated caller which addresses have accounts.
+ */
+export const DECOY_HASH = "pbkdf2-sha256$100000$BKtl8lgSzWp_CeIanhNWFg$k3uDh33WPtp5jd5wNKUWG2d8ZLJt3cbrIS8LRwaR8kc";
+
 export async function verifyPassword(
   password: string,
   encoded: string,

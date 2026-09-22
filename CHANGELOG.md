@@ -4,6 +4,14 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+- Sign-in no longer takes noticeably longer for an email that has an account than for one that does not. The unknown case returned before the password derivation ran, which let anyone measure which addresses are registered; both cases now derive.
+- A workspace export sizes each page by what the previous one weighed instead of always reading 200 rows. A table of very wide rows — a message allows 100 KB of text and 200 KB of HTML — could exceed the Worker's memory, and because the cursor stays at the page that failed, every later attempt failed in the same place and the export never recovered.
+
+### Added
+- The sign-in page says so when the deployment cannot serve requests yet. `/setup` and the readiness report both need an admin session, so the one person a broken deployment strands, the operator who cannot create the first account, previously saw nothing but a failed form.
+
+
 ## [0.3.3] - 2026-09-22
 
 ### Changed

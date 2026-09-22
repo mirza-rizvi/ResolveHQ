@@ -282,6 +282,33 @@ describe("workspace backups", () => {
     expect(after.cursor?.table ?? "done").not.toBe(before.cursor?.table ?? "start");
   });
 
+  it("narrows the page when rows are wide instead of failing at the same offset", async () => {
+    const workspace = await signup("backup-wide-rows");
+    const ticket = await seedTicket(workspace, "backup-wide-rows");
+
+    // A message allows 100 KB of text; a fixed 200-row page of these is tens of
+    // megabytes inside a 128 MB Worker, and the cursor persists at the page that
+    // failed, so every later attempt used to fail in the same place.
+    const wide = "x".repeat(60_000);
+    for (let index = 0; index < 12; index += 1)
+      await env.DB.prepare(
+        "INSERT INTO messages (id, organization_id, ticket_id, author_type, kind, body_text, delivery_status, created_at) VALUES (?, ?, ?, 'customer', 'message', ?, 'received', ?)",
+      )
+        .bind(`msg_wide_${index}`, workspace.organizationId, ticket.id, wide, Date.now())
+        .run();
+
+    const backup = await startBackup(workspace);
+    // Default limits, not the tiny test ones: this is about the real page sizing.
+    await runToCompletion(backup.id, {});
+
+    const finished = await readBackup(backup.id);
+    expect(finished.status).toBe("completed");
+    expect(finished.rowCounts.messages).toBeGreaterThanOrEqual(12);
+
+    const lines = await downloadLines(workspace, backup.id, "messages");
+    expect(lines.filter((row) => typeof row.body_text === "string" && row.body_text.length === 60_000)).toHaveLength(12);
+  });
+
   it("drops the readiness cache from the settings export", async () => {
     const workspace = await signup("backup-settings-redaction");
     await env.DB.prepare(

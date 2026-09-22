@@ -2097,3 +2097,21 @@
     flex-direction: column;
   }
 }
+
+.auth-deployment-status {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  color: var(--badge-amber-ink);
+  background: var(--badge-amber-bg);
+  border: 1px solid var(--badge-amber-ink);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.auth-deployment-status svg {
+  flex: none;
+  margin-top: 2px;
+}

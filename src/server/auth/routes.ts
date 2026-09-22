@@ -19,7 +19,7 @@ import { newId } from "resolve-server/lib/id";
 import { randomToken, sha256 } from "resolve-server/lib/crypto";
 import { sendSystemMail } from "resolve-server/mail/system";
 import type { HonoEnv } from "resolve-server/types";
-import { hashPassword, verifyPassword } from "./password";
+import { hashPassword, verifyPassword, DECOY_HASH } from "./password";
 import { clearSessionCookies, createSession, resolveTenant, SESSION_COOKIE } from "./session";
 import { assertMutationOrigin, requireAuth } from "./middleware";
 import { turnstileEnabled, verifyTurnstile } from "./turnstile";
@@ -204,10 +204,17 @@ authRoutes.post("/login", validate("json", credentials), async (context) => {
     .orderBy(asc(organizationMemberships.createdAt))
     .limit(1);
 
-  if (
-    !result ||
-    !(await verifyPassword(input.password, result.passwordHash, context.env.SESSION_PEPPER, context.get("authTimings")))
-  ) {
+  // An unknown email derives against a decoy rather than returning early, so the two
+  // cases cost the same. Short-circuiting on `!result` made response time an
+  // account-enumeration oracle: a few milliseconds for an address with no account,
+  // tens of milliseconds for one with.
+  const verified = await verifyPassword(
+    input.password,
+    result?.passwordHash ?? DECOY_HASH,
+    context.env.SESSION_PEPPER,
+    context.get("authTimings"),
+  );
+  if (!result || !verified) {
     throw new HttpError(401, "invalid_credentials", "Email or password is incorrect.");
   }
 
