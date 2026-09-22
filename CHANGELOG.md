@@ -4,15 +4,6 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
-### Fixed
-- The browser suite runs in CI. Its first two runs there failed at sign-in, because the dev server reads `.dev.vars`, which is gitignored and therefore absent on a runner; without it `SESSION_PEPPER` is unset and every auth route answers `503 Authentication is not configured`. CI now creates that file the same way `CONTRIBUTING.md` tells a developer to. Failures also upload `test-results/`, without which neither failure could have been diagnosed, and CI gets a slightly larger test timeout than a developer's machine.
-- Sign-in no longer takes noticeably longer for an email that has an account than for one that does not. The unknown case returned before the password derivation ran, which let anyone measure which addresses are registered; both cases now derive.
-- A workspace export sizes each page by what the previous one weighed instead of always reading 200 rows. A table of very wide rows — a message allows 100 KB of text and 200 KB of HTML — could exceed the Worker's memory, and because the cursor stays at the page that failed, every later attempt failed in the same place and the export never recovered.
-
-### Added
-- The sign-in page says so when the deployment cannot serve requests yet. `/setup` and the readiness report both need an admin session, so the one person a broken deployment strands, the operator who cannot create the first account, previously saw nothing but a failed form.
-
-
 ## [0.3.3] - 2026-09-22
 
 ### Changed
@@ -24,10 +15,14 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 - `global_fetch_strictly_public` is enabled. A request this Worker makes to its own zone now loops back through Cloudflare's front door instead of being routed straight to the origin, where it would bypass Cloudflare's security settings. It narrows what a tenant-supplied webhook URL can reach; it is not a private-address block, so the checks in `src/server/webhooks/destination.ts` still carry that job.
 
 ### Added
+- The sign-in page says so when the deployment cannot serve requests yet. `/setup` and the readiness report both need an admin session, so the one person a broken deployment strands, the operator who cannot create the first account, previously saw nothing but a failed form.
 - `npm run smoke -- <url>` smoke-tests a deployed Worker: that it responds, that its database has a schema, and that the app shell is served. With `--signup` it also creates one throwaway workspace and signs in with it, which is the only check that exercises password hashing on real infrastructure. Every other gate in the project runs against local `workerd`, which does not enforce some limits the production runtime does; that gap shipped both the 310,000-iteration PBKDF2 failure and an unmigrated database.
 - CI now runs the Playwright suite as its own job, on a browser it installs itself, and uploads the report when it fails. The browser tests previously ran only on a developer's machine, which is how a broken screenshot spec went unnoticed for days.
 
 ### Fixed
+- Sign-in no longer takes noticeably longer for an email that has an account than for one that does not. The unknown case returned before the password derivation ran, which let anyone measure which addresses are registered; both cases now derive.
+- The browser suite runs in CI. Its first two runs there failed at sign-in, because the dev server reads `.dev.vars`, which is gitignored and therefore absent on a runner; without it `SESSION_PEPPER` is unset and every auth route answers `503 Authentication is not configured`. CI now creates that file the same way `CONTRIBUTING.md` tells a developer to. Failures also upload `test-results/`, without which neither failure could have been diagnosed, and CI gets a slightly larger test timeout than a developer's machine.
+- A workspace export sizes each page by what the previous one weighed instead of always reading 200 rows. A table of very wide rows — a message allows 100 KB of text and 200 KB of HTML — could exceed the Worker's memory, and because the cursor stays at the page that failed, every later attempt failed in the same place and the export never recovered.
 - **A webhook endpoint no longer reads its target's response back to you.** A failed delivery stored the first 200 bytes of the response body, and the endpoint list and test routes returned it. Combined with destination checks that resolve no DNS, that made a tenant-supplied URL a readable probe rather than a blind one. Only the status is kept now.
 - **An API key restricted to particular inboxes is now restricted in search too.** The ticket routes enforced it; `/api/v1/search` carried no inbox predicate at all, so a key scoped to one inbox could read subjects from every inbox under the same `tickets:read` scope.
 - **The MCP `get_customer` tool honours the key's inbox restriction.** Only its recent-tickets sub-query was filtered, so a restricted key could confirm any customer in the workspace existed and read their name, company and every known email address.
