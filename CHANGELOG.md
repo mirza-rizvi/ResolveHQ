@@ -4,6 +4,9 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Changed
+- The inbound mail parser now loads only when mail arrives. It was imported at module scope, so every cold start of the Worker, including every web request that landed on a fresh isolate, parsed and compiled about a tenth of the bundle it would never use. It now ships as a separate module that a deployment evaluates on first use. A local startup profile cannot show the saving, because `wrangler check startup` re-bundles the Worker into one file; the effect is only visible on a real deployment.
+
 ### Fixed
 - The deployment health check notices a half-applied migration chain. It compared the tables the running code expects against the ones that exist, which cannot see a migration that only adds a column, an index or a constraint; it now also compares what this build ships against what `d1_migrations` records as applied. `/api/ready` and Settings → Setup & health both report it, with a count and the command, never the schema itself.
 

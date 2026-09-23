@@ -265,6 +265,10 @@ function decodeBase64(value: string) {
 
 export class PostalMimeIncomingProvider implements IncomingMailProvider {
   async parse(raw: ArrayBuffer): Promise<IncomingMail> {
+    // Loaded on first use rather than at module scope. The MIME parser is only needed when
+    // mail arrives, but a static import made every cold start parse and compile it, including
+    // every HTTP request that lands on a fresh isolate. It was about a tenth of the bundle.
+    const { default: PostalMime } = await import("postal-mime");
     const email = await PostalMime.parse(raw, {
       attachmentEncoding: "arraybuffer",
       maxHeadersSize: 256 * 1024,
@@ -323,4 +327,3 @@ function readableText(html: string) {
     .replace(/\s+/g, " ")
     .trim();
 }
-import PostalMime from "postal-mime";
