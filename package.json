@@ -96,7 +96,7 @@
     "eslint": "^10.11.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
-    "jsdom": "^26.1.0",
+    "jsdom": "^30.1.1",
     "prettier": "^3.9.9",
     "tailwindcss": "^4.1.13",
     "tsx": "^4.23.15",
