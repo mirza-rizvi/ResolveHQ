@@ -5,6 +5,7 @@ All notable changes to ResolveHQ are recorded here. The format follows [Keep a C
 ## [Unreleased]
 
 ### Changed
+- Build and test tooling moves to Vite 8 and jsdom 30, alongside a batch of minor and patch dependency updates. The Vite config resolves its aliases from `import.meta.dirname` instead of `__dirname`, which Vite's upcoming native config loader will not support.
 - The inbound mail parser now loads only when mail arrives. It was imported at module scope, so every cold start of the Worker, including every web request that landed on a fresh isolate, parsed and compiled about a tenth of the bundle it would never use. It now ships as a separate module that a deployment evaluates on first use. A local startup profile cannot show the saving, because `wrangler check startup` re-bundles the Worker into one file; the effect is only visible on a real deployment.
 
 ### Fixed

@@ -10,9 +10,9 @@ export default defineConfig({
   plugins: [cloudflare(), react(), tailwindcss()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
-      "resolve-server": path.resolve(__dirname, "./src/server"),
-      "resolve-shared": path.resolve(__dirname, "./src/shared"),
+      "@": path.resolve(import.meta.dirname, "./src"),
+      "resolve-server": path.resolve(import.meta.dirname, "./src/server"),
+      "resolve-shared": path.resolve(import.meta.dirname, "./src/shared"),
     },
   },
   server: { port: 5173 },
