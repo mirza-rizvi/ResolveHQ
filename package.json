@@ -111,6 +111,8 @@
     "@esbuild-kit/core-utils": {
       "esbuild": "^0.25.12"
     },
-    "undici@>=7.0.0 <7.29.1": "7.30.0"
+    "miniflare": {
+      "undici": "7.30.0"
+    }
   }
 }
