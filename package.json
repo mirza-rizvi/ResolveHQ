@@ -72,7 +72,7 @@
     "drizzle-orm": "^0.45.3",
     "hono": "^4.13.9",
     "lucide-react": "^1.48.0",
-    "postal-mime": "^2.7.6",
+    "postal-mime": "^4.0.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.4",
