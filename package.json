@@ -70,7 +70,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.3",
-    "hono": "^4.13.9",
+    "hono": "^4.13.13",
     "lucide-react": "^1.48.0",
     "postal-mime": "^2.7.6",
     "react": "^19.3.0",
